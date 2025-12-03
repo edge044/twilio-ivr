@@ -1,23 +1,12 @@
 const express = require('express');
 const VoiceResponse = require('twilio').twiml.VoiceResponse;
-const nodemailer = require('nodemailer');
+const twilioClient = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 const app = express();
 
 // Middleware so Twilio can send form data
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
-
-// -------------------------------------------------------
-// EMAIL TRANSPORTER (Google Workspace SMTP)
-// -------------------------------------------------------
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.SMTP_USERNAME,    // Your Workspace email
-    pass: process.env.SMTP_PASSWORD     // App Password
-  }
-});
 
 // -------------------------------------------------------
 // MAIN IVR MENU
@@ -48,13 +37,10 @@ app.post('/handle-key', (req, res) => {
 
   if (digit === '1') {
     twiml.redirect('/book-date');
-
   } else if (digit === '2') {
     twiml.say("Business information goes here.");
-
   } else if (digit === '3') {
     twiml.say("Connecting you to your AI assistant.");
-
   } else {
     twiml.say("Invalid choice. Goodbye.");
   }
@@ -100,31 +86,25 @@ app.post('/book-time', (req, res) => {
   res.send(twiml.toString());
 });
 
-// STEP 3 — Confirm booking AND SEND EMAIL
+// STEP 3 — CONFIRM & SEND SMS
 app.post('/confirm-booking', (req, res) => {
   const twiml = new VoiceResponse();
-
   const date = req.query.date || "an unspecified day";
   const time = req.body.SpeechResult || "an unspecified time";
 
-  // Tell caller everything is booked
+  // Tell the caller the booking is received
   twiml.say(`Great! I have you down for ${date} at ${time}. We will contact you soon to confirm. Thank you!`);
 
-  // Email notification
-  const mailOptions = {
-    from: process.env.SMTP_USERNAME,
-    to: process.env.BOOKING_TO_EMAIL,
-    subject: "New Appointment Booking",
-    text: `New appointment booked:\n\nDate: ${date}\nTime: ${time}\n\nSent automatically from your IVR system.`
-  };
-
-  transporter.sendMail(mailOptions, (error, info) => {
-    if (error) {
-      console.log("EMAIL ERROR:", error);
-    } else {
-      console.log("EMAIL SENT:", info.response);
-    }
-  });
+  // -------------------------
+  // SEND SMS NOTIFICATION
+  // -------------------------
+  twilioClient.messages.create({
+    body: `New Appointment Booked:\nDate: ${date}\nTime: ${time}`,
+    from: process.env.TWILIO_PHONE_NUMBER,   // your Twilio number
+    to: process.env.MY_PERSONAL_NUMBER       // your personal phone number
+  })
+  .then(msg => console.log("SMS sent:", msg.sid))
+  .catch(err => console.log("SMS error:", err));
 
   res.type('text/xml');
   res.send(twiml.toString());
