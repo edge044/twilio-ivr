@@ -1,5 +1,6 @@
 const express = require('express');
 const VoiceResponse = require('twilio').twiml.VoiceResponse;
+const nodemailer = require('nodemailer');
 
 const app = express();
 
@@ -7,7 +8,21 @@ const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
+// -------------------------------------------------------
+// EMAIL TRANSPORTER (Google Workspace SMTP)
+// -------------------------------------------------------
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.SMTP_USERNAME,    // Matthew.yanovych@altairpartner.com
+    pass: process.env.SMTP_PASSWORD     // Your Google Workspace App Password
+  }
+});
+
+
+// -------------------------------------------------------
 // MAIN IVR MENU
+// -------------------------------------------------------
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
 
@@ -25,21 +40,24 @@ app.post('/voice', (req, res) => {
   res.send(twiml.toString());
 });
 
-// HANDLE MENU INPUT
+
+// -------------------------------------------------------
+// MENU INPUT HANDLER
+// -------------------------------------------------------
 app.post('/handle-key', (req, res) => {
   const twiml = new VoiceResponse();
   const digit = req.body.Digits;
 
   if (digit === '1') {
-    // Redirect to appointment booking flow
+    // Start appointment booking flow
     twiml.redirect('/book-date');
-  
+
   } else if (digit === '2') {
     twiml.say("Business information goes here.");
-  
+
   } else if (digit === '3') {
     twiml.say("Connecting you to your AI assistant.");
-  
+
   } else {
     twiml.say("Invalid choice. Goodbye.");
   }
@@ -49,9 +67,11 @@ app.post('/handle-key', (req, res) => {
 });
 
 
-// --- APPOINTMENT BOOKING FLOW ---
+// -------------------------------------------------------
+// APPOINTMENT BOOKING FLOW
+// -------------------------------------------------------
 
-// STEP 1 — Ask for date
+// STEP 1 — Ask for the date
 app.post('/book-date', (req, res) => {
   const twiml = new VoiceResponse();
 
@@ -61,14 +81,14 @@ app.post('/book-date', (req, res) => {
     method: "POST"
   });
 
-  gather.say("Sure, what day would you like to book your appointment? You can say tomorrow, Friday, or December 9th.");
+  gather.say("Sure, what day would you like to book your appointment? You can say tomorrow, Friday, or December ninth.");
 
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
 
-// STEP 2 — Ask for time
+// STEP 2 — Ask for the time
 app.post('/book-time', (req, res) => {
   const twiml = new VoiceResponse();
   const date = req.body.SpeechResult || "an unspecified date";
@@ -86,21 +106,40 @@ app.post('/book-time', (req, res) => {
 });
 
 
-// STEP 3 — Confirm booking
+// STEP 3 — Confirm the booking + SEND EMAIL
 app.post('/confirm-booking', (req, res) => {
   const twiml = new VoiceResponse();
 
   const date = req.query.date || "an unspecified day";
   const time = req.body.SpeechResult || "an unspecified time";
 
+  // Confirmation to caller
   twiml.say(`Great! I have you down for ${date} at ${time}. We will contact you soon to confirm. Thank you!`);
+
+  // Send appointment email
+  const mailOptions = {
+    from: process.env.SMTP_USERNAME,
+    to: process.env.BOOKING_TO_EMAIL,
+    subject: "New Appointment Booking",
+    text: `You received a new appointment:\n\nDate: ${date}\nTime: ${time}\n\nSent automatically from your IVR system.`
+  };
+
+  transporter.sendMail(mailOptions, (error, info) => {
+    if (error) {
+      console.log("Email Error:", error);
+    } else {
+      console.log("Email Sent:", info.response);
+    }
+  });
 
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
 
+// -------------------------------------------------------
 // START SERVER
+// -------------------------------------------------------
 app.listen(1337, () => {
   console.log('IVR server running at http://127.0.0.1:1337/');
 });
