@@ -31,11 +31,15 @@ app.post('/handle-key', (req, res) => {
   const digit = req.body.Digits;
 
   if (digit === '1') {
-    twiml.say("Booking an appointment. Please wait while I connect you.");
+    // Redirect to appointment booking flow
+    twiml.redirect('/book-date');
+  
   } else if (digit === '2') {
     twiml.say("Business information goes here.");
+  
   } else if (digit === '3') {
     twiml.say("Connecting you to your AI assistant.");
+  
   } else {
     twiml.say("Invalid choice. Goodbye.");
   }
@@ -44,8 +48,59 @@ app.post('/handle-key', (req, res) => {
   res.send(twiml.toString());
 });
 
+
+// --- APPOINTMENT BOOKING FLOW ---
+
+// STEP 1 — Ask for date
+app.post('/book-date', (req, res) => {
+  const twiml = new VoiceResponse();
+
+  const gather = twiml.gather({
+    input: "speech",
+    action: "/book-time",
+    method: "POST"
+  });
+
+  gather.say("Sure, what day would you like to book your appointment? You can say tomorrow, Friday, or December 9th.");
+
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+
+// STEP 2 — Ask for time
+app.post('/book-time', (req, res) => {
+  const twiml = new VoiceResponse();
+  const date = req.body.SpeechResult || "an unspecified date";
+
+  const gather = twiml.gather({
+    input: "speech",
+    action: `/confirm-booking?date=${encodeURIComponent(date)}`,
+    method: "POST"
+  });
+
+  gather.say(`Got it. You said ${date}. What time works best for you?`);
+
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+
+// STEP 3 — Confirm booking
+app.post('/confirm-booking', (req, res) => {
+  const twiml = new VoiceResponse();
+
+  const date = req.query.date || "an unspecified day";
+  const time = req.body.SpeechResult || "an unspecified time";
+
+  twiml.say(`Great! I have you down for ${date} at ${time}. We will contact you soon to confirm. Thank you!`);
+
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+
 // START SERVER
 app.listen(1337, () => {
   console.log('IVR server running at http://127.0.0.1:1337/');
 });
-
