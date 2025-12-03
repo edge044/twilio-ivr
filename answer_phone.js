@@ -14,11 +14,10 @@ app.use(express.json());
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: process.env.SMTP_USERNAME,    // Matthew.yanovych@altairpartner.com
-    pass: process.env.SMTP_PASSWORD     // Your Google Workspace App Password
+    user: process.env.SMTP_USERNAME,    // Your Workspace email
+    pass: process.env.SMTP_PASSWORD     // App Password
   }
 });
-
 
 // -------------------------------------------------------
 // MAIN IVR MENU
@@ -40,7 +39,6 @@ app.post('/voice', (req, res) => {
   res.send(twiml.toString());
 });
 
-
 // -------------------------------------------------------
 // MENU INPUT HANDLER
 // -------------------------------------------------------
@@ -49,7 +47,6 @@ app.post('/handle-key', (req, res) => {
   const digit = req.body.Digits;
 
   if (digit === '1') {
-    // Start appointment booking flow
     twiml.redirect('/book-date');
 
   } else if (digit === '2') {
@@ -65,7 +62,6 @@ app.post('/handle-key', (req, res) => {
   res.type('text/xml');
   res.send(twiml.toString());
 });
-
 
 // -------------------------------------------------------
 // APPOINTMENT BOOKING FLOW
@@ -87,7 +83,6 @@ app.post('/book-date', (req, res) => {
   res.send(twiml.toString());
 });
 
-
 // STEP 2 — Ask for the time
 app.post('/book-time', (req, res) => {
   const twiml = new VoiceResponse();
@@ -105,37 +100,35 @@ app.post('/book-time', (req, res) => {
   res.send(twiml.toString());
 });
 
-
-// STEP 3 — Confirm the booking + SEND EMAIL
+// STEP 3 — Confirm booking AND SEND EMAIL
 app.post('/confirm-booking', (req, res) => {
   const twiml = new VoiceResponse();
 
   const date = req.query.date || "an unspecified day";
   const time = req.body.SpeechResult || "an unspecified time";
 
-  // Confirmation to caller
+  // Tell caller everything is booked
   twiml.say(`Great! I have you down for ${date} at ${time}. We will contact you soon to confirm. Thank you!`);
 
-  // Send appointment email
+  // Email notification
   const mailOptions = {
     from: process.env.SMTP_USERNAME,
     to: process.env.BOOKING_TO_EMAIL,
     subject: "New Appointment Booking",
-    text: `You received a new appointment:\n\nDate: ${date}\nTime: ${time}\n\nSent automatically from your IVR system.`
+    text: `New appointment booked:\n\nDate: ${date}\nTime: ${time}\n\nSent automatically from your IVR system.`
   };
 
   transporter.sendMail(mailOptions, (error, info) => {
     if (error) {
-      console.log("Email Error:", error);
+      console.log("EMAIL ERROR:", error);
     } else {
-      console.log("Email Sent:", info.response);
+      console.log("EMAIL SENT:", info.response);
     }
   });
 
   res.type('text/xml');
   res.send(twiml.toString());
 });
-
 
 // -------------------------------------------------------
 // START SERVER
