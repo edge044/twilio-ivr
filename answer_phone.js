@@ -37,7 +37,7 @@ function addAppointment(name, phone, date, time) {
 
 function deleteAppointment(phone) {
   let db = loadDB();
-  db = db.filter(a => a.phone !== phone); 
+  db = db.filter(a => a.phone !== phone);
   saveDB(db);
 }
 
@@ -134,12 +134,13 @@ app.post('/appointment-manage', (req, res) => {
 // -------------------------------------------------------
 app.post('/start-appointment', (req, res) => {
   const twiml = new VoiceResponse();
-  const phone = req.query.phone;
+  const phone = req.query.phone || req.body.From;
 
   const gather = twiml.gather({
     input: "speech",
     action: `/book-date?phone=${phone}`,
-    method: "POST"
+    method: "POST",
+    timeout: 5
   });
 
   gather.say("Please say your full name.");
@@ -149,38 +150,60 @@ app.post('/start-appointment', (req, res) => {
 });
 
 // -------------------------------------------------------
-// DATE
+// DATE - ИСПРАВЛЕННЫЙ КОД!
 // -------------------------------------------------------
 app.post('/book-date', (req, res) => {
   const twiml = new VoiceResponse();
-  const name = req.body.SpeechResult;
-  const phone = req.query.phone;
+  const name = req.body.SpeechResult || '';
+  const phone = req.query.phone || req.body.From;
+
+  // Проверяем получили ли имя
+  if (!name || name.trim() === '') {
+    twiml.say("Sorry, I didn't catch your name. Please try again.");
+    twiml.redirect('/start-appointment');
+    return res.type('text/xml').send(twiml.toString());
+  }
+
+  // Кодируем имя для безопасной передачи в URL
+  const encodedName = encodeURIComponent(name);
 
   const gather = twiml.gather({
     input: "speech",
-    action: `/book-time?phone=${phone}&name=${encodeURIComponent(name)}`,
-    method: "POST"
+    action: `/book-time?phone=${phone}&name=${encodedName}`,
+    method: "POST",
+    timeout: 5
   });
 
-  gather.say(`Thanks ${name}. What day works for you?`);
+  gather.say(`Thanks. What day works for you?`);
 
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
 // -------------------------------------------------------
-// TIME
+// TIME - ИСПРАВЛЕННЫЙ КОД!
 // -------------------------------------------------------
 app.post('/book-time', (req, res) => {
   const twiml = new VoiceResponse();
-  const date = req.body.SpeechResult;
-  const name = req.query.name;
-  const phone = req.query.phone;
+  const date = req.body.SpeechResult || '';
+  const name = decodeURIComponent(req.query.name || '');
+  const phone = req.query.phone || req.body.From;
+
+  // Проверяем получили ли дату
+  if (!date || date.trim() === '') {
+    twiml.say("Sorry, I didn't catch the date. Please try again.");
+    twiml.redirect(`/book-date?phone=${phone}`);
+    return res.type('text/xml').send(twiml.toString());
+  }
+
+  // Кодируем дату
+  const encodedDate = encodeURIComponent(date);
 
   const gather = twiml.gather({
     input: "speech",
-    action: `/confirm-booking?phone=${phone}&name=${name}&date=${encodeURIComponent(date)}`,
-    method: "POST"
+    action: `/confirm-booking?phone=${phone}&name=${encodeURIComponent(name)}&date=${encodedDate}`,
+    method: "POST",
+    timeout: 5
   });
 
   gather.say(`What time on ${date}?`);
@@ -190,23 +213,44 @@ app.post('/book-time', (req, res) => {
 });
 
 // -------------------------------------------------------
-// SAVE APPOINTMENT
+// SAVE APPOINTMENT - ИСПРАВЛЕННЫЙ КОД!
 // -------------------------------------------------------
 app.post('/confirm-booking', (req, res) => {
   const twiml = new VoiceResponse();
-  const time = req.body.SpeechResult;
-  const { phone, name, date } = req.query;
+  const time = req.body.SpeechResult || '';
+  const name = decodeURIComponent(req.query.name || '');
+  const date = decodeURIComponent(req.query.date || '');
+  const phone = req.query.phone || req.body.From;
 
+  // Проверяем все данные
+  if (!time || !name || !date || !phone) {
+    twiml.say("Sorry, there was an error. Please try again.");
+    twiml.redirect('/voice');
+    return res.type('text/xml').send(twiml.toString());
+  }
+
+  // Добавляем запись
   addAppointment(name, phone, date, time);
 
-  twiml.say(`Your appointment for ${date} at ${time} has been saved.`);
+  // Отправляем СМС подтверждение
+  try {
+    twilioClient.messages.create({
+      body: `✅ New appointment: ${name} - ${date} at ${time} (from: ${phone})`,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: process.env.MY_PERSONAL_NUMBER
+    });
+  } catch (err) {
+    console.log("SMS error:", err);
+  }
+
+  twiml.say(`Your appointment for ${date} at ${time} has been saved. Thank you!`);
 
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
 // -------------------------------------------------------
-// CALLBACK
+// CALLBACK REQUEST
 // -------------------------------------------------------
 app.post('/callback-request', (req, res) => {
   const twiml = new VoiceResponse();
@@ -244,9 +288,10 @@ app.post('/rep-busy', (req, res) => {
 app.post('/voicemail-complete', (req, res) => {
   const twiml = new VoiceResponse();
   const url = req.body.RecordingUrl;
+  const caller = req.body.From;
 
   twilioClient.messages.create({
-    body: `📩 New voicemail: ${url}`,
+    body: `📩 New voicemail from ${caller}: ${url}`,
     from: process.env.TWILIO_PHONE_NUMBER,
     to: process.env.MY_PERSONAL_NUMBER
   });
@@ -260,4 +305,5 @@ app.post('/voicemail-complete', (req, res) => {
 // -------------------------------------------------------
 // START SERVER
 // -------------------------------------------------------
-app.listen(1337, () => console.log("IVR server running (JSON mode)."));
+const PORT = process.env.PORT || 1337;
+app.listen(PORT, () => console.log(`IVR server running on port ${PORT} (JSON mode).`));
