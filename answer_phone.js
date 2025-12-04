@@ -5,33 +5,21 @@ const twilioClient = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.e
 
 const app = express();
 
-// ❤️ FIXED: Correct Google Web App URL
-const APPOINTMENTS_API_URL = "https://script.google.com/macros/s/AKfycbzt-ns9b2nE9fnfmYv62YMnjMIYU65rBbhEHgfZAtr9_RseYXtffzj2LBJNA1W9RrE/exec";
+// ❤️ FIXED: Correct Google Web App URL (THE ONE YOU JUST SENT)
+const APPOINTMENTS_API_URL = "https://script.google.com/a/macros/altairpartner.com/s/AKfycbyUc8dA2CMIAfytAlU_T4VXWi3Z9pKGO-LOJT9AwOKumDBaQ0Ju4ehpDfu9fQVHE6BsIQ/exec";
 
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-// -------------------------------------------------------
-// SAFE JSON PARSER (PREVENTS “Unexpected token <”)
-// -------------------------------------------------------
+// SAFE JSON CHECK
 function safeJSON(body) {
   if (!body || typeof body !== "string") return null;
-
-  // If Google returns HTML → return null safely
-  if (body.trim().startsWith("<")) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(body);
-  } catch (e) {
-    return null;
-  }
+  if (body.trim().startsWith("<")) return null; // HTML returned — not JSON
+  try { return JSON.parse(body); }
+  catch { return null; }
 }
 
-// -------------------------------------------------------
-// GOOGLE SHEETS API CALLER (FULLY FIXED)
-// -------------------------------------------------------
+// GOOGLE SHEETS API CALLER
 function callAppointmentsApi(payload) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(payload);
@@ -52,21 +40,12 @@ function callAppointmentsApi(payload) {
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
         const json = safeJSON(body);
-
-        if (!json) {
-          console.error("❌ Google Script returned NON-JSON:", body);
-          return reject("Google API returned invalid JSON");
-        }
-
+        if (!json) return reject("Google returned invalid JSON");
         resolve(json);
       });
     });
 
-    req.on('error', (err) => {
-      console.error("❌ Network error calling API:", err);
-      reject(err);
-    });
-
+    req.on('error', reject);
     req.write(data);
     req.end();
   });
@@ -96,7 +75,7 @@ app.post('/voice', (req, res) => {
 });
 
 // -------------------------------------------------------
-// HANDLE MENU INPUT
+// HANDLE KEY
 // -------------------------------------------------------
 app.post('/handle-key', async (req, res) => {
   const twiml = new VoiceResponse();
@@ -105,7 +84,6 @@ app.post('/handle-key', async (req, res) => {
 
   try {
     if (digit === '1') {
-      // CALL GOOGLE SHEETS
       const response = await callAppointmentsApi({
         action: "findAppointment",
         phone: callerPhone
@@ -119,9 +97,10 @@ app.post('/handle-key', async (req, res) => {
         });
 
         gather.say(
-          `I see you have an appointment on ${response.date} at ${response.time} Pacific time. ` +
-          "Press 1 to cancel. Press 2 to reschedule."
+          `You have an appointment on ${response.date} at ${response.time}. ` +
+          "Press 1 to cancel or 2 to reschedule."
         );
+
       } else {
         twiml.redirect(`/start-appointment?phone=${encodeURIComponent(callerPhone)}`);
       }
@@ -136,12 +115,12 @@ app.post('/handle-key', async (req, res) => {
     }
 
     else {
-      twiml.say("Invalid option. Goodbye.");
+      twiml.say("Invalid option.");
     }
 
   } catch (err) {
-    console.error("❌ ERROR in /handle-key:", err);
-    twiml.say("We are experiencing system issues. Please try again later.");
+    console.error("ERROR /handle-key", err);
+    twiml.say("System error. Try again later.");
   }
 
   res.type('text/xml');
@@ -165,17 +144,17 @@ app.post('/appointment-manage', async (req, res) => {
 
     else if (digit === '2') {
       await callAppointmentsApi({ action: "cancelAppointment", row });
-      twiml.say("Okay, let's reschedule.");
+      twiml.say("Let's reschedule.");
       twiml.redirect(`/start-appointment?phone=${encodeURIComponent(phone)}`);
     }
 
     else {
-      twiml.say("Invalid option.");
+      twiml.say("Invalid choice.");
     }
 
   } catch (err) {
-    console.error("❌ ERROR in /appointment-manage:", err);
-    twiml.say("System error. Try later.");
+    console.error("ERROR /appointment-manage", err);
+    twiml.say("System failure.");
   }
 
   res.type('text/xml');
@@ -183,7 +162,7 @@ app.post('/appointment-manage', async (req, res) => {
 });
 
 // -------------------------------------------------------
-// NAME → DATE → TIME → SAVE
+// START APPOINTMENT (NAME)
 // -------------------------------------------------------
 app.post('/start-appointment', (req, res) => {
   const twiml = new VoiceResponse();
@@ -195,12 +174,15 @@ app.post('/start-appointment', (req, res) => {
     method: "POST"
   });
 
-  gather.say("Please say your full name after the beep.");
+  gather.say("Please say your full name.");
 
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
+// -------------------------------------------------------
+// BOOK DATE
+// -------------------------------------------------------
 app.post('/book-date', (req, res) => {
   const twiml = new VoiceResponse();
   const name = req.body.SpeechResult;
@@ -212,18 +194,20 @@ app.post('/book-date', (req, res) => {
     method: "POST"
   });
 
-  gather.say(`Thanks ${name}. What day works for you?`);
+  gather.say(`Thanks ${name}. What day would you like?`);
 
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
+// -------------------------------------------------------
+// BOOK TIME
+// -------------------------------------------------------
 app.post('/book-time', (req, res) => {
   const twiml = new VoiceResponse();
-
   const date = req.body.SpeechResult;
-  const phone = req.query.phone;
   const name = req.query.name;
+  const phone = req.query.phone;
 
   const gather = twiml.gather({
     input: "speech",
@@ -231,31 +215,34 @@ app.post('/book-time', (req, res) => {
     method: "POST"
   });
 
-  gather.say(`Great. What time on ${date}?`);
+  gather.say(`What time on ${date}?`);
 
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
+// -------------------------------------------------------
+// CONFIRM BOOKING
+// -------------------------------------------------------
 app.post('/confirm-booking', async (req, res) => {
   const twiml = new VoiceResponse();
-
-  const phone = req.query.phone;
-  const name = req.query.name;
-  const date = req.query.date;
   const time = req.body.SpeechResult;
+  const { phone, name, date } = req.query;
 
   try {
     await callAppointmentsApi({
       action: "addAppointment",
-      name, phone, date, time
+      name,
+      phone,
+      date,
+      time
     });
 
-    twiml.say(`Your appointment for ${date} at ${time} has been saved. Thank you.`);
+    twiml.say(`Your appointment for ${date} at ${time} has been saved.`);
 
   } catch (err) {
-    console.error("❌ ERROR in /confirm-booking:", err);
-    twiml.say("We could not save your appointment. Try again later.");
+    console.error("ERROR /confirm-booking", err);
+    twiml.say("Could not save appointment.");
   }
 
   res.type('text/xml');
@@ -269,10 +256,10 @@ app.post('/callback-request', (req, res) => {
   const twiml = new VoiceResponse();
   const caller = req.body.From;
 
-  twiml.say("Your callback request has been submitted.");
+  twiml.say("Callback request submitted.");
 
   twilioClient.messages.create({
-    body: `📞 Callback requested from: ${caller}`,
+    body: `📞 Callback requested from ${caller}`,
     from: process.env.TWILIO_PHONE_NUMBER,
     to: process.env.MY_PERSONAL_NUMBER
   });
@@ -286,8 +273,7 @@ app.post('/callback-request', (req, res) => {
 // -------------------------------------------------------
 app.post('/rep-busy', (req, res) => {
   const twiml = new VoiceResponse();
-
-  twiml.say("Representatives are busy. Leave a message after the beep.");
+  twiml.say("Representatives are busy. Leave a message.");
 
   twiml.record({
     action: '/voicemail-complete',
@@ -318,6 +304,4 @@ app.post('/voicemail-complete', (req, res) => {
 // -------------------------------------------------------
 // START SERVER
 // -------------------------------------------------------
-app.listen(1337, () => {
-  console.log("IVR server running.");
-});
+app.listen(1337, () => console.log("IVR server running."));
