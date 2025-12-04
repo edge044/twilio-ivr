@@ -21,7 +21,7 @@ app.post('/voice', (req, res) => {
   });
 
   gather.say(
-    "Thank you for choosing Altair Partners. Your call may be monitored for quality assurance. Press 1 to cancel or schedule an appointment. Press 3 to speak with one of our representatives."
+    "Thank you for choosing Altair Partners. Your call may be monitored for quality assurance. Press 1 to cancel or schedule an appointment. Press 3 to leave a message for one of our representatives."
   );
 
   res.type('text/xml');
@@ -38,10 +38,52 @@ app.post('/handle-key', (req, res) => {
   if (digit === '1') {
     twiml.redirect('/book-date');
   } else if (digit === '3') {
-    twiml.say("Please hold while we connect you to a representative.");
+    twiml.redirect('/voicemail');
   } else {
     twiml.say("Invalid choice. Goodbye.");
   }
+
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+// -------------------------------------------------------
+// VOICEMAIL ROUTE
+// -------------------------------------------------------
+app.post('/voicemail', (req, res) => {
+  const twiml = new VoiceResponse();
+
+  twiml.say("All of our representatives are currently assisting other callers. Please leave a message after the beep. Press the pound key when you are finished.");
+
+  twiml.record({
+    action: '/voicemail-complete',
+    method: 'POST',
+    maxLength: 60,
+    finishOnKey: '#',
+    playBeep: true
+  });
+
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+// -------------------------------------------------------
+// VOICEMAIL COMPLETION — SEND SMS WITH LINK
+// -------------------------------------------------------
+app.post('/voicemail-complete', (req, res) => {
+  const twiml = new VoiceResponse();
+  const recordingUrl = req.body.RecordingUrl;
+
+  twiml.say("Thank you. Your message has been sent. Goodbye.");
+
+  // Send SMS to you with voicemail URL
+  twilioClient.messages.create({
+    body: `📩 New Voicemail Received:\n${recordingUrl}`,
+    from: process.env.TWILIO_PHONE_NUMBER,
+    to: process.env.MY_PERSONAL_NUMBER
+  })
+  .then(msg => console.log("Voicemail SMS sent:", msg.sid))
+  .catch(err => console.log("Voicemail SMS error:", err));
 
   res.type('text/xml');
   res.send(twiml.toString());
@@ -90,16 +132,12 @@ app.post('/confirm-booking', (req, res) => {
   const date = req.query.date || "an unspecified day";
   const time = req.body.SpeechResult || "an unspecified time";
 
-  // Tell the caller the booking is received
   twiml.say(`Great! I have you down for ${date} at ${time}. We will contact you soon to confirm. Thank you!`);
 
-  // -------------------------
-  // SEND SMS NOTIFICATION
-  // -------------------------
   twilioClient.messages.create({
     body: `New Appointment Booked:\nDate: ${date}\nTime: ${time}`,
-    from: process.env.TWILIO_PHONE_NUMBER,   // your Twilio number
-    to: process.env.MY_PERSONAL_NUMBER       // your personal phone number
+    from: process.env.TWILIO_PHONE_NUMBER,
+    to: process.env.MY_PERSONAL_NUMBER
   })
   .then(msg => console.log("SMS sent:", msg.sid))
   .catch(err => console.log("SMS error:", err));
