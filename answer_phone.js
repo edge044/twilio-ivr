@@ -46,6 +46,7 @@ function deleteAppointment(phone) {
 // -------------------------------------------------------
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
+  
   const gather = twiml.gather({
     numDigits: 1,
     action: '/handle-key',
@@ -60,7 +61,6 @@ app.post('/voice', (req, res) => {
     "Press 9 to request a callback."
   );
 
-  // If no input, repeat menu
   twiml.redirect('/voice');
 
   res.type('text/xml');
@@ -74,6 +74,11 @@ app.post('/handle-key', (req, res) => {
   const twiml = new VoiceResponse();
   const digit = req.body.Digits;
   const phone = req.body.From;
+
+  if (!digit) {
+    twiml.redirect('/voice');
+    return res.type('text/xml').send(twiml.toString());
+  }
 
   if (digit === '1') {
     const appt = findAppointment(phone);
@@ -91,7 +96,6 @@ app.post('/handle-key', (req, res) => {
         "Press 1 to cancel or 2 to reschedule."
       );
 
-      // If no input, go back
       twiml.redirect('/voice');
 
     } else {
@@ -108,7 +112,7 @@ app.post('/handle-key', (req, res) => {
   }
 
   else {
-    twiml.say("Invalid option. Try again.");
+    twiml.say("Invalid option.");
     twiml.redirect('/voice');
   }
 
@@ -124,18 +128,21 @@ app.post('/appointment-manage', (req, res) => {
   const digit = req.body.Digits;
   const phone = req.query.phone;
 
+  if (!digit) {
+    twiml.redirect('/voice');
+    return res.type('text/xml').send(twiml.toString());
+  }
+
   if (digit === '1') {
     deleteAppointment(phone);
-    twiml.say("Your appointment has been cancelled.");
-    twiml.pause(1);
-    twiml.say("Goodbye.");
+    twiml.say("Your appointment has been cancelled. Goodbye.");
     twiml.hangup();
   }
 
   else if (digit === '2') {
     deleteAppointment(phone);
-    twiml.say("Let's reschedule.");
-    twiml.redirect(`/start-appointment?phone=${encodeURIComponent(phone)}`);
+    twiml.say("Let's reschedule your appointment.");
+    twiml.redirect(`/get-name?phone=${encodeURIComponent(phone)}`);
   }
 
   else {
@@ -148,147 +155,187 @@ app.post('/appointment-manage', (req, res) => {
 });
 
 // -------------------------------------------------------
-// NAME
+// GET NAME - SIMPLE SPEECH RECOGNITION
 // -------------------------------------------------------
 app.post('/start-appointment', (req, res) => {
   const twiml = new VoiceResponse();
   const phone = req.query.phone || req.body.From;
-
-  const gather = twiml.gather({
-    input: "speech",
-    action: `/book-date?phone=${phone}`,
-    method: "POST",
-    speechTimeout: 3,
-    timeout: 10
-  });
-
-  gather.say("Please say your full name.");
-
-  // If no speech detected
-  twiml.say("I didn't hear your name. Let's try again.");
-  twiml.redirect(`/start-appointment?phone=${phone}`);
-
-  res.type('text/xml');
-  res.send(twiml.toString());
+  
+  twiml.redirect(`/get-name?phone=${encodeURIComponent(phone)}`);
 });
 
-// -------------------------------------------------------
-// DATE - FIXED!
-// -------------------------------------------------------
-app.post('/book-date', (req, res) => {
+app.post('/get-name', (req, res) => {
   const twiml = new VoiceResponse();
-  const name = req.body.SpeechResult || '';
   const phone = req.query.phone || req.body.From;
-
-  console.log("DEBUG - Name received:", name); // For debugging
-
-  // Check if we got the name
-  if (!name || name.trim() === '') {
-    twiml.say("Sorry, I didn't catch your name.");
-    twiml.redirect(`/start-appointment?phone=${phone}`);
-    return res.type('text/xml').send(twiml.toString());
-  }
-
-  // Encode name for URL
-  const encodedName = encodeURIComponent(name);
-
+  
   const gather = twiml.gather({
-    input: "speech",
-    action: `/book-time?phone=${phone}&name=${encodedName}`,
-    method: "POST",
-    speechTimeout: 3,
+    input: 'speech',
+    action: `/process-name?phone=${encodeURIComponent(phone)}`,
+    method: 'POST',
+    speechTimeout: 2,
     timeout: 10,
     speechModel: 'phone_call',
     enhanced: true
   });
-
-  gather.say(`Thanks. What day works for you? For example, you can say Friday, or a specific date like December 15th.`);
-
-  // If no speech detected
-  twiml.say("I didn't hear a date.");
-  twiml.redirect(`/book-date?phone=${phone}`);
-
+  
+  gather.say("Please say your first name.");
+  
+  twiml.say("Sorry, I didn't hear your name. Let's try again.");
+  twiml.redirect(`/get-name?phone=${encodeURIComponent(phone)}`);
+  
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
-// -------------------------------------------------------
-// TIME - FIXED!
-// -------------------------------------------------------
-app.post('/book-time', (req, res) => {
+app.post('/process-name', (req, res) => {
   const twiml = new VoiceResponse();
-  const date = req.body.SpeechResult || '';
-  const name = decodeURIComponent(req.query.name || '');
   const phone = req.query.phone || req.body.From;
-
-  console.log("DEBUG - Date received:", date); // For debugging
-
-  // Check if we got the date
-  if (!date || date.trim() === '') {
-    twiml.say("Sorry, I didn't catch the date.");
-    twiml.redirect(`/book-date?phone=${phone}&name=${encodeURIComponent(name)}`);
-    return res.type('text/xml').send(twiml.toString());
+  
+  // Get the name from speech
+  let name = req.body.SpeechResult || '';
+  
+  console.log("DEBUG - Raw name received:", name);
+  
+  // Simple name cleaning logic
+  if (name) {
+    // Take only the first word (first name)
+    const firstName = name.split(' ')[0];
+    
+    // Capitalize first letter
+    const cleanedName = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
+    
+    console.log("DEBUG - Cleaned name:", cleanedName);
+    
+    // Store in session or pass via URL
+    twiml.redirect(`/get-date?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(cleanedName)}`);
+  } else {
+    twiml.say("Sorry, I didn't catch your name. Let's try again.");
+    twiml.redirect(`/get-name?phone=${encodeURIComponent(phone)}`);
   }
-
-  // Encode date
-  const encodedDate = encodeURIComponent(date);
-
-  const gather = twiml.gather({
-    input: "speech",
-    action: `/confirm-booking?phone=${phone}&name=${encodeURIComponent(name)}&date=${encodedDate}`,
-    method: "POST",
-    speechTimeout: 3,
-    timeout: 10
-  });
-
-  gather.say(`What time on ${date}? For example, you can say 2 PM, or 10 in the morning.`);
-
-  // If no speech detected
-  twiml.say("I didn't hear a time.");
-  twiml.redirect(`/book-time?phone=${phone}&name=${encodeURIComponent(name)}`);
-
+  
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
 // -------------------------------------------------------
-// SAVE APPOINTMENT - FIXED!
+// GET DATE - SIMPLE SPEECH RECOGNITION
 // -------------------------------------------------------
-app.post('/confirm-booking', (req, res) => {
+app.post('/get-date', (req, res) => {
   const twiml = new VoiceResponse();
-  const time = req.body.SpeechResult || '';
+  const phone = req.query.phone || req.body.From;
+  const name = decodeURIComponent(req.query.name || '');
+  
+  const gather = twiml.gather({
+    input: 'speech',
+    action: `/process-date?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}`,
+    method: 'POST',
+    speechTimeout: 2,
+    timeout: 10,
+    speechModel: 'phone_call',
+    enhanced: true
+  });
+  
+  gather.say(`Thanks ${name}. What day would you like to schedule? For example, say Friday, or December 15th.`);
+  
+  twiml.say("Sorry, I didn't hear a date. Let's try again.");
+  twiml.redirect(`/get-date?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}`);
+  
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+app.post('/process-date', (req, res) => {
+  const twiml = new VoiceResponse();
+  const phone = req.query.phone || req.body.From;
+  const name = decodeURIComponent(req.query.name || '');
+  
+  // Get the date from speech
+  let date = req.body.SpeechResult || '';
+  
+  console.log("DEBUG - Raw date received:", date);
+  
+  if (date) {
+    // Simple date cleaning - just use what we got
+    const cleanedDate = date.trim();
+    
+    console.log("DEBUG - Cleaned date:", cleanedDate);
+    
+    twiml.redirect(`/get-time?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}&date=${encodeURIComponent(cleanedDate)}`);
+  } else {
+    twiml.say("Sorry, I didn't catch the date. Let's try again.");
+    twiml.redirect(`/get-date?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}`);
+  }
+  
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+// -------------------------------------------------------
+// GET TIME - SIMPLE SPEECH RECOGNITION
+// -------------------------------------------------------
+app.post('/get-time', (req, res) => {
+  const twiml = new VoiceResponse();
+  const phone = req.query.phone || req.body.From;
   const name = decodeURIComponent(req.query.name || '');
   const date = decodeURIComponent(req.query.date || '');
+  
+  const gather = twiml.gather({
+    input: 'speech',
+    action: `/process-time?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}&date=${encodeURIComponent(date)}`,
+    method: 'POST',
+    speechTimeout: 2,
+    timeout: 10,
+    speechModel: 'phone_call',
+    enhanced: true
+  });
+  
+  gather.say(`What time on ${date}? For example, say 2 PM, or 10 in the morning.`);
+  
+  twiml.say("Sorry, I didn't hear a time. Let's try again.");
+  twiml.redirect(`/get-time?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}&date=${encodeURIComponent(date)}`);
+  
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+app.post('/process-time', (req, res) => {
+  const twiml = new VoiceResponse();
   const phone = req.query.phone || req.body.From;
-
-  console.log("DEBUG - Time received:", time); // For debugging
-
-  // Check all data
-  if (!time || !name || !date || !phone) {
-    twiml.say("Sorry, there was an error. Let's start over.");
-    twiml.redirect('/voice');
-    return res.type('text/xml').send(twiml.toString());
+  const name = decodeURIComponent(req.query.name || '');
+  const date = decodeURIComponent(req.query.date || '');
+  
+  // Get the time from speech
+  let time = req.body.SpeechResult || '';
+  
+  console.log("DEBUG - Raw time received:", time);
+  
+  if (time) {
+    // Simple time cleaning - just use what we got
+    const cleanedTime = time.trim();
+    
+    console.log("DEBUG - Cleaned time:", cleanedTime);
+    
+    // Save the appointment
+    addAppointment(name, phone, date, cleanedTime);
+    
+    // Send SMS confirmation
+    try {
+      twilioClient.messages.create({
+        body: `✅ New appointment: ${name} - ${date} at ${cleanedTime} (from: ${phone})`,
+        from: process.env.TWILIO_PHONE_NUMBER,
+        to: process.env.MY_PERSONAL_NUMBER
+      });
+    } catch (err) {
+      console.log("SMS error:", err);
+    }
+    
+    twiml.say(`Perfect ${name}! Your appointment has been scheduled for ${date} at ${cleanedTime}. Thank you! Goodbye.`);
+    twiml.hangup();
+  } else {
+    twiml.say("Sorry, I didn't catch the time. Let's try again.");
+    twiml.redirect(`/get-time?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}&date=${encodeURIComponent(date)}`);
   }
-
-  // Add appointment
-  addAppointment(name, phone, date, time);
-
-  // Send SMS confirmation
-  try {
-    twilioClient.messages.create({
-      body: `✅ New appointment: ${name} - ${date} at ${time} (from: ${phone})`,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: process.env.MY_PERSONAL_NUMBER
-    });
-  } catch (err) {
-    console.log("SMS error:", err);
-  }
-
-  twiml.say(`Perfect! Your appointment has been scheduled for ${date} at ${time}. Thank you!`);
-  twiml.pause(1);
-  twiml.say("Goodbye.");
-  twiml.hangup();
-
+  
   res.type('text/xml');
   res.send(twiml.toString());
 });
@@ -300,17 +347,15 @@ app.post('/callback-request', (req, res) => {
   const twiml = new VoiceResponse();
   const caller = req.body.From;
 
-  twiml.say("Your callback request has been submitted. We'll call you back as soon as possible.");
-
+  twiml.say("Your callback request has been submitted. We'll call you back as soon as possible. Goodbye.");
+  
   // Send SMS
   twilioClient.messages.create({
     body: `📞 Callback requested from ${caller}`,
     from: process.env.TWILIO_PHONE_NUMBER,
     to: process.env.MY_PERSONAL_NUMBER
   });
-
-  twiml.pause(1);
-  twiml.say("Goodbye.");
+  
   twiml.hangup();
 
   res.type('text/xml');
@@ -331,7 +376,6 @@ app.post('/rep-busy', (req, res) => {
     timeout: 10
   });
 
-  // If no recording
   twiml.say("No message recorded. Goodbye.");
   twiml.hangup();
 
