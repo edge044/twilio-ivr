@@ -46,7 +46,7 @@ function deleteAppointment(phone) {
 }
 
 // -------------------------------------------------------
-// MAIN MENU - FIXED
+// MAIN MENU - UPDATED PROMPTS
 // -------------------------------------------------------
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
@@ -61,8 +61,8 @@ app.post('/voice', (req, res) => {
   });
 
   gather.say(
-    "Thank you for choosing Altair Partners. " +
-    "Press 1 to cancel or schedule an appointment. " +
+    "Thank you for choosing Altair Partners. This call may be monitored for quality assurance. " +
+    "Press 1 to schedule or cancel an appointment. " +
     "Press 3 to speak with a representative. " +
     "Press 9 to request a callback.",
     { voice: 'alice', language: 'en-US' }
@@ -77,7 +77,7 @@ app.post('/voice', (req, res) => {
 });
 
 // -------------------------------------------------------
-// HANDLE MAIN MENU - FIXED
+// HANDLE MAIN MENU
 // -------------------------------------------------------
 app.post('/handle-key', (req, res) => {
   const twiml = new VoiceResponse();
@@ -144,7 +144,7 @@ app.post('/handle-key', (req, res) => {
 });
 
 // -------------------------------------------------------
-// CANCEL / RESCHEDULE - FIXED
+// CANCEL / RESCHEDULE
 // -------------------------------------------------------
 app.post('/appointment-manage', (req, res) => {
   const twiml = new VoiceResponse();
@@ -183,7 +183,7 @@ app.post('/appointment-manage', (req, res) => {
 });
 
 // -------------------------------------------------------
-// GET NAME - FIXED
+// GET NAME
 // -------------------------------------------------------
 app.post('/get-name', (req, res) => {
   const twiml = new VoiceResponse();
@@ -239,7 +239,7 @@ app.post('/process-name', (req, res) => {
 });
 
 // -------------------------------------------------------
-// GET DATE - FIXED
+// GET DATE - UPDATED PROMPT (DATE ONLY, NO DAYS)
 // -------------------------------------------------------
 app.post('/get-date', (req, res) => {
   const twiml = new VoiceResponse();
@@ -258,7 +258,12 @@ app.post('/get-date', (req, res) => {
     enhanced: true
   });
   
-  gather.say(`What day would you like to schedule? For example, say Friday, or December 15th.`, { voice: 'alice', language: 'en-US' });
+  gather.say(
+    `Please say the date you'd like to schedule. ` +
+    `Say the month and day only. For example: December 5th, or January 15. ` +
+    `Do not say days like Friday or Monday. Only month and day.`,
+    { voice: 'alice', language: 'en-US' }
+  );
   
   twiml.say("I didn't hear a date. Let's try again.", { voice: 'alice', language: 'en-US' });
   twiml.redirect(`/get-date?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}`);
@@ -293,7 +298,7 @@ app.post('/process-date', (req, res) => {
 });
 
 // -------------------------------------------------------
-// GET TIME - FIXED
+// GET TIME - UPDATED PROMPT (SPECIFIC TIME ZONE)
 // -------------------------------------------------------
 app.post('/get-time', (req, res) => {
   const twiml = new VoiceResponse();
@@ -313,7 +318,13 @@ app.post('/get-time', (req, res) => {
     enhanced: true
   });
   
-  gather.say(`What time on ${date}? For example, say 2 PM, or 10 in the morning.`, { voice: 'alice', language: 'en-US' });
+  gather.say(
+    `What time on ${date}? ` +
+    `Please say the time in Pacific Time. ` +
+    `For example: 2 PM Pacific, or 10 in the morning Pacific. ` +
+    `Please include AM or PM and specify Pacific Time.`,
+    { voice: 'alice', language: 'en-US' }
+  );
   
   twiml.say("I didn't hear a time. Let's try again.", { voice: 'alice', language: 'en-US' });
   twiml.redirect(`/get-time?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}&date=${encodeURIComponent(date)}`);
@@ -337,13 +348,19 @@ app.post('/process-time', (req, res) => {
     const cleanedTime = time.trim();
     console.log("DEBUG: Cleaned time:", cleanedTime);
     
+    // Add Pacific Time if not already in time
+    let finalTime = cleanedTime;
+    if (!finalTime.toLowerCase().includes('pacific') && !finalTime.toLowerCase().includes('pt')) {
+      finalTime = `${cleanedTime} Pacific Time`;
+    }
+    
     // Save appointment
-    addAppointment(name, phone, date, cleanedTime);
+    addAppointment(name, phone, date, finalTime);
     
     // Send SMS
     try {
       twilioClient.messages.create({
-        body: `✅ New appointment: ${name} - ${date} at ${cleanedTime} (from: ${phone})`,
+        body: `✅ New appointment: ${name} - ${date} at ${finalTime} (from: ${phone})`,
         from: process.env.TWILIO_PHONE_NUMBER,
         to: process.env.MY_PERSONAL_NUMBER
       });
@@ -352,7 +369,11 @@ app.post('/process-time', (req, res) => {
       console.log("ERROR sending SMS:", err);
     }
     
-    twiml.say(`Perfect! Your appointment has been scheduled for ${date} at ${cleanedTime}. Thank you! Goodbye.`, { voice: 'alice', language: 'en-US' });
+    twiml.say(
+      `Perfect! Your appointment has been scheduled for ${date} at ${finalTime}. ` +
+      `Thank you for choosing Altair Partners. Goodbye.`,
+      { voice: 'alice', language: 'en-US' }
+    );
     twiml.hangup();
   } else {
     console.log("DEBUG: No time received");
@@ -365,7 +386,7 @@ app.post('/process-time', (req, res) => {
 });
 
 // -------------------------------------------------------
-// CALLBACK REQUEST - FIXED
+// CALLBACK REQUEST
 // -------------------------------------------------------
 app.post('/callback-request', (req, res) => {
   const twiml = new VoiceResponse();
@@ -373,7 +394,11 @@ app.post('/callback-request', (req, res) => {
 
   console.log("DEBUG: /callback-request - Caller:", caller);
 
-  twiml.say("Your callback request has been submitted. We'll call you back as soon as possible. Goodbye.", { voice: 'alice', language: 'en-US' });
+  twiml.say(
+    "Your callback request has been submitted. We'll call you back as soon as possible. " +
+    "Thank you for choosing Altair Partners. Goodbye.",
+    { voice: 'alice', language: 'en-US' }
+  );
   
   // Send SMS
   twilioClient.messages.create({
@@ -389,14 +414,19 @@ app.post('/callback-request', (req, res) => {
 });
 
 // -------------------------------------------------------
-// VOICEMAIL - FIXED
+// VOICEMAIL - UPDATED PROMPT
 // -------------------------------------------------------
 app.post('/rep-busy', (req, res) => {
   const twiml = new VoiceResponse();
   
   console.log("DEBUG: /rep-busy endpoint hit");
 
-  twiml.say("All representatives are currently busy. Please leave a message after the beep.", { voice: 'alice', language: 'en-US' });
+  twiml.say(
+    "All representatives are currently busy. " +
+    "Please leave a message after the beep. " +
+    "This call may be monitored for quality assurance.",
+    { voice: 'alice', language: 'en-US' }
+  );
 
   twiml.record({
     action: '/voicemail-complete',
@@ -405,7 +435,7 @@ app.post('/rep-busy', (req, res) => {
     timeout: 10
   });
 
-  twiml.say("No message recorded. Goodbye.", { voice: 'alice', language: 'en-US' });
+  twiml.say("No message recorded. Thank you for calling Altair Partners. Goodbye.", { voice: 'alice', language: 'en-US' });
   twiml.hangup();
 
   res.type('text/xml');
