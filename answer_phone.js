@@ -8,12 +8,50 @@ const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
+
+// -------------------------------------------------------
+// BUSINESS HOURS CHECK (Mon–Fri, 10AM–6PM Pacific Time)
+// -------------------------------------------------------
+function isBusinessHours() {
+  const now = new Date();
+
+  // Convert to Pacific Time (America/Los_Angeles)
+  const pacificTime = now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
+  const datePT = new Date(pacificTime);
+
+  const day = datePT.getDay();   // 0=Sun, 1=Mon, ... 6=Sat
+  const hour = datePT.getHours();
+
+  const isWeekday = day >= 1 && day <= 5;       // Monday–Friday
+  const isOpenHours = hour >= 10 && hour < 18;  // 10:00 AM → 5:59 PM
+
+  return isWeekday && isOpenHours;
+}
+
+
 // -------------------------------------------------------
 // MAIN IVR MENU (ALTAIR PARTNERS)
 // -------------------------------------------------------
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
 
+  // If during CLOSED hours → skip menu → send to voicemail
+  if (!isBusinessHours()) {
+    twiml.say("Thank you for calling Altair Partners. Our office is currently closed. Please leave a message after the beep.");
+    
+    twiml.record({
+      action: '/voicemail-complete',
+      method: 'POST',
+      maxLength: 60,
+      playBeep: true,
+      finishOnKey: '#'
+    });
+
+    res.type('text/xml');
+    return res.send(twiml.toString());
+  }
+
+  // Otherwise → normal menu
   const gather = twiml.gather({
     numDigits: 1,
     action: '/handle-key',
@@ -28,6 +66,7 @@ app.post('/voice', (req, res) => {
   res.send(twiml.toString());
 });
 
+
 // -------------------------------------------------------
 // MENU HANDLER
 // -------------------------------------------------------
@@ -39,7 +78,6 @@ app.post('/handle-key', (req, res) => {
     twiml.redirect('/book-date');
 
   } else if (digit === '3') {
-    // Fake connecting message
     twiml.say("Please wait while I connect you with one of our representatives.");
     twiml.redirect('/rep-busy');
 
@@ -54,6 +92,7 @@ app.post('/handle-key', (req, res) => {
   res.send(twiml.toString());
 });
 
+
 // -------------------------------------------------------
 // CALLBACK REQUEST
 // -------------------------------------------------------
@@ -63,7 +102,6 @@ app.post('/callback-request', (req, res) => {
 
   twiml.say("Thank you. Your callback request has been submitted. Goodbye.");
 
-  // Send SMS to you
   twilioClient.messages.create({
     body: `📞 Callback Requested:\nCaller: ${caller}`,
     from: process.env.TWILIO_PHONE_NUMBER,
@@ -73,6 +111,7 @@ app.post('/callback-request', (req, res) => {
   res.type('text/xml');
   res.send(twiml.toString());
 });
+
 
 // -------------------------------------------------------
 // REPRESENTATIVE BUSY → VOICEMAIL
@@ -96,6 +135,7 @@ app.post('/rep-busy', (req, res) => {
   res.send(twiml.toString());
 });
 
+
 // -------------------------------------------------------
 // VOICEMAIL COMPLETE → SEND SMS
 // -------------------------------------------------------
@@ -115,6 +155,7 @@ app.post('/voicemail-complete', (req, res) => {
   res.send(twiml.toString());
 });
 
+
 // -------------------------------------------------------
 // APPOINTMENT BOOKING FLOW
 // -------------------------------------------------------
@@ -133,6 +174,7 @@ app.post('/book-date', (req, res) => {
   res.send(twiml.toString());
 });
 
+
 app.post('/book-time', (req, res) => {
   const twiml = new VoiceResponse();
   const date = req.body.SpeechResult || "an unspecified date";
@@ -148,6 +190,7 @@ app.post('/book-time', (req, res) => {
   res.type('text/xml');
   res.send(twiml.toString());
 });
+
 
 app.post('/confirm-booking', (req, res) => {
   const twiml = new VoiceResponse();
@@ -165,6 +208,7 @@ app.post('/confirm-booking', (req, res) => {
   res.type('text/xml');
   res.send(twiml.toString());
 });
+
 
 // -------------------------------------------------------
 // START SERVER
