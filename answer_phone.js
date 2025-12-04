@@ -21,7 +21,7 @@ app.post('/voice', (req, res) => {
   });
 
   gather.say(
-    "Thank you for choosing Altair Partners. Your call may be monitored for quality assurance. Press 1 to cancel or schedule an appointment. Press 3 to speak with one of our representatives."
+    "Thank you for choosing Altair Partners. Your call may be monitored for quality assurance. Press 1 to cancel or schedule an appointment. Press 3 to speak with one of our representatives. Press 9 if you would like a callback."
   );
 
   res.type('text/xml');
@@ -41,13 +41,34 @@ app.post('/handle-key', (req, res) => {
   } else if (digit === '3') {
     // Fake connecting message
     twiml.say("Please wait while I connect you with one of our representatives.");
-    
-    // Go to the “busy” message immediately
     twiml.redirect('/rep-busy');
+
+  } else if (digit === '9') {
+    twiml.redirect('/callback-request');
 
   } else {
     twiml.say("Invalid choice. Goodbye.");
   }
+
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+// -------------------------------------------------------
+// CALLBACK REQUEST
+// -------------------------------------------------------
+app.post('/callback-request', (req, res) => {
+  const twiml = new VoiceResponse();
+  const caller = req.body.From;
+
+  twiml.say("Thank you. Your callback request has been submitted. Goodbye.");
+
+  // Send SMS to you
+  twilioClient.messages.create({
+    body: `📞 Callback Requested:\nCaller: ${caller}`,
+    from: process.env.TWILIO_PHONE_NUMBER,
+    to: process.env.MY_PERSONAL_NUMBER
+  });
 
   res.type('text/xml');
   res.send(twiml.toString());
@@ -59,7 +80,7 @@ app.post('/handle-key', (req, res) => {
 app.post('/rep-busy', (req, res) => {
   const twiml = new VoiceResponse();
 
-  twiml.pause({ length: 2 }); // pause for realism
+  twiml.pause({ length: 2 });
 
   twiml.say("I'm sorry, all of our representatives are busy right now. Please leave a message after the beep. Press the pound key when you are finished.");
 
@@ -84,7 +105,6 @@ app.post('/voicemail-complete', (req, res) => {
 
   twiml.say("Thank you. Your message has been recorded. Goodbye.");
 
-  // Send SMS to you
   twilioClient.messages.create({
     body: `📩 New Voicemail Received:\n${recordingUrl}`,
     from: process.env.TWILIO_PHONE_NUMBER,
