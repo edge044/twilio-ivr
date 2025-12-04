@@ -9,7 +9,7 @@ app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
 // -------------------------------------------------------
-// MAIN IVR MENU
+// MAIN IVR MENU (BRANDED FOR ALTAIR PARTNERS)
 // -------------------------------------------------------
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
@@ -21,7 +21,7 @@ app.post('/voice', (req, res) => {
   });
 
   gather.say(
-    "Welcome to your creative agency. Press 1 to book an appointment. Press 2 for business information. Press 3 to talk to your AI assistant."
+    "Thank you for choosing Altair Partners. Your call may be monitored for quality assurance. Press 1 to cancel or schedule an appointment. Press 3 to speak with one of our representatives."
   );
 
   res.type('text/xml');
@@ -37,10 +37,8 @@ app.post('/handle-key', (req, res) => {
 
   if (digit === '1') {
     twiml.redirect('/book-date');
-  } else if (digit === '2') {
-    twiml.say("Business information goes here.");
   } else if (digit === '3') {
-    twiml.say("Connecting you to your AI assistant.");
+    twiml.say("Please hold while we connect you to a representative.");
   } else {
     twiml.say("Invalid choice. Goodbye.");
   }
