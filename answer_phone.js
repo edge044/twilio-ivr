@@ -11,47 +11,107 @@ app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
 // -------------------------------------------------------
-// JSON DATABASE
+// JSON DATABASE - IMPROVED
 // -------------------------------------------------------
 const DB_PATH = "./appointments.json";
 
 function loadDB() {
-  if (!fs.existsSync(DB_PATH)) {
-    fs.writeFileSync(DB_PATH, '[]');
+  try {
+    if (!fs.existsSync(DB_PATH)) {
+      console.log("Creating new appointments.json file");
+      fs.writeFileSync(DB_PATH, '[]');
+      return [];
+    }
+    const data = fs.readFileSync(DB_PATH, "utf8");
+    const parsed = JSON.parse(data || '[]');
+    console.log(`DEBUG: Loaded ${parsed.length} appointments from database`);
+    return parsed;
+  } catch (error) {
+    console.error("ERROR loading database:", error);
     return [];
   }
-  const data = fs.readFileSync(DB_PATH, "utf8");
-  return JSON.parse(data || '[]');
 }
 
 function saveDB(data) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+  try {
+    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+    console.log(`DEBUG: Saved ${data.length} appointments to database`);
+  } catch (error) {
+    console.error("ERROR saving database:", error);
+  }
 }
 
 function findAppointment(phone) {
   const db = loadDB();
-  return db.find(a => a.phone === phone);
+  console.log(`DEBUG: Looking for appointment for phone: ${phone}`);
+  console.log(`DEBUG: Database has ${db.length} appointments`);
+  
+  // Normalize phone number (remove +, spaces, etc.)
+  const normalizedPhone = phone.replace(/\D/g, '');
+  
+  const appointment = db.find(a => {
+    const normalizedApptPhone = a.phone.replace(/\D/g, '');
+    return normalizedApptPhone === normalizedPhone;
+  });
+  
+  if (appointment) {
+    console.log("DEBUG: Found appointment:", appointment);
+  } else {
+    console.log("DEBUG: No appointment found for this number");
+  }
+  
+  return appointment;
 }
 
 function addAppointment(name, phone, date, time) {
   const db = loadDB();
-  db.push({ name, phone, date, time });
-  saveDB(db);
+  
+  // Remove existing appointment for this phone first
+  const normalizedPhone = phone.replace(/\D/g, '');
+  const filteredDB = db.filter(a => {
+    const normalizedApptPhone = a.phone.replace(/\D/g, '');
+    return normalizedApptPhone !== normalizedPhone;
+  });
+  
+  // Add new appointment
+  filteredDB.push({ 
+    name, 
+    phone,  // Store original phone with +
+    date, 
+    time,
+    created: new Date().toISOString()
+  });
+  
+  saveDB(filteredDB);
+  console.log(`DEBUG: Added appointment for ${phone}: ${date} at ${time}`);
 }
 
 function deleteAppointment(phone) {
   let db = loadDB();
-  db = db.filter(a => a.phone !== phone);
-  saveDB(db);
+  const normalizedPhone = phone.replace(/\D/g, '');
+  
+  const initialLength = db.length;
+  db = db.filter(a => {
+    const normalizedApptPhone = a.phone.replace(/\D/g, '');
+    return normalizedApptPhone !== normalizedPhone;
+  });
+  
+  if (db.length < initialLength) {
+    saveDB(db);
+    console.log(`DEBUG: Deleted appointment for ${phone}`);
+  } else {
+    console.log(`DEBUG: No appointment found to delete for ${phone}`);
+  }
 }
 
 // -------------------------------------------------------
-// MAIN MENU - UPDATED PROMPTS
+// MAIN MENU
 // -------------------------------------------------------
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
   
   console.log("DEBUG: /voice endpoint hit");
+  console.log("DEBUG: Caller:", req.body.From);
   
   const gather = twiml.gather({
     numDigits: 1,
@@ -77,7 +137,7 @@ app.post('/voice', (req, res) => {
 });
 
 // -------------------------------------------------------
-// HANDLE MAIN MENU
+// HANDLE MAIN MENU - IMPROVED WITH BETTER PROMPTS
 // -------------------------------------------------------
 app.post('/handle-key', (req, res) => {
   const twiml = new VoiceResponse();
@@ -94,11 +154,11 @@ app.post('/handle-key', (req, res) => {
   }
 
   if (digit === '1') {
-    console.log("DEBUG: Option 1 selected");
+    console.log("DEBUG: Option 1 selected - Checking for existing appointment");
     const appt = findAppointment(phone);
 
     if (appt) {
-      console.log("DEBUG: Found existing appointment");
+      console.log("DEBUG: Found existing appointment:", appt);
       const gather = twiml.gather({
         numDigits: 1,
         action: `/appointment-manage?phone=${encodeURIComponent(phone)}`,
@@ -107,8 +167,9 @@ app.post('/handle-key', (req, res) => {
       });
 
       gather.say(
-        `You have an appointment on ${appt.date} at ${appt.time}. ` +
-        "Press 1 to cancel or 2 to reschedule.",
+        `I see you have an appointment scheduled on ${appt.date} at ${appt.time}. ` +
+        "Press 1 to cancel this appointment. " +
+        "Press 2 to reschedule.",
         { voice: 'alice', language: 'en-US' }
       );
 
@@ -117,7 +178,7 @@ app.post('/handle-key', (req, res) => {
       twiml.redirect('/voice');
 
     } else {
-      console.log("DEBUG: No existing appointment, starting new");
+      console.log("DEBUG: No existing appointment found, starting new");
       twiml.say("Let's schedule a new appointment.", { voice: 'alice', language: 'en-US' });
       twiml.redirect(`/get-name?phone=${encodeURIComponent(phone)}`);
     }
@@ -195,10 +256,11 @@ app.post('/get-name', (req, res) => {
     input: 'speech',
     action: `/process-name?phone=${encodeURIComponent(phone)}`,
     method: 'POST',
-    speechTimeout: 2,
+    speechTimeout: 3,
     timeout: 10,
-    speechModel: 'phone_call',
-    enhanced: true
+    speechModel: 'numbers_and_commands', // Better for time recognition
+    enhanced: true,
+    profanityFilter: false
   });
   
   gather.say("Please say your first name.", { voice: 'alice', language: 'en-US' });
@@ -215,7 +277,7 @@ app.post('/process-name', (req, res) => {
   const phone = req.query.phone || req.body.From;
   
   console.log("DEBUG: /process-name - Phone:", phone);
-  console.log("DEBUG: SpeechResult:", req.body.SpeechResult);
+  console.log("DEBUG: Raw SpeechResult:", req.body.SpeechResult);
   
   let name = req.body.SpeechResult || '';
   
@@ -239,7 +301,7 @@ app.post('/process-name', (req, res) => {
 });
 
 // -------------------------------------------------------
-// GET DATE - UPDATED PROMPT (DATE ONLY, NO DAYS)
+// GET DATE
 // -------------------------------------------------------
 app.post('/get-date', (req, res) => {
   const twiml = new VoiceResponse();
@@ -252,10 +314,11 @@ app.post('/get-date', (req, res) => {
     input: 'speech',
     action: `/process-date?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}`,
     method: 'POST',
-    speechTimeout: 2,
+    speechTimeout: 3,
     timeout: 10,
-    speechModel: 'phone_call',
-    enhanced: true
+    speechModel: 'numbers_and_commands',
+    enhanced: true,
+    profanityFilter: false
   });
   
   gather.say(
@@ -278,7 +341,7 @@ app.post('/process-date', (req, res) => {
   const name = decodeURIComponent(req.query.name || '');
   
   console.log("DEBUG: /process-date - Phone:", phone, "Name:", name);
-  console.log("DEBUG: SpeechResult:", req.body.SpeechResult);
+  console.log("DEBUG: Raw SpeechResult:", req.body.SpeechResult);
   
   let date = req.body.SpeechResult || '';
   
@@ -298,7 +361,7 @@ app.post('/process-date', (req, res) => {
 });
 
 // -------------------------------------------------------
-// GET TIME - UPDATED PROMPT (SPECIFIC TIME ZONE)
+// GET TIME - IMPROVED SPEECH MODEL FOR TIME
 // -------------------------------------------------------
 app.post('/get-time', (req, res) => {
   const twiml = new VoiceResponse();
@@ -312,18 +375,18 @@ app.post('/get-time', (req, res) => {
     input: 'speech',
     action: `/process-time?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}&date=${encodeURIComponent(date)}`,
     method: 'POST',
-    speechTimeout: 2,
+    speechTimeout: 3,
     timeout: 10,
-    speechModel: 'phone_call',
-    enhanced: true
+    speechModel: 'numbers_and_commands', // SPECIFICALLY BETTER FOR NUMBERS/TIME
+    enhanced: true,
+    profanityFilter: false
   });
   
   gather.say(
     `What time on ${date}? ` +
-    `Please say the time in Pacific Time. ` +
-    `For example: 2 PM Pacific, or 10 in the morning Pacific. ` +
-    `Please include AM or PM and specify Pacific Time.`,
-    { voice: 'alice', language: 'en-US' }
+    `Please say the time clearly. For example: 10 P M, or 2 30 P M. ` +
+    `Make sure to say P M or A M clearly.`,
+    { voice: 'alice', language: 'en-US', slow: true } // Added slow speech
   );
   
   twiml.say("I didn't hear a time. Let's try again.", { voice: 'alice', language: 'en-US' });
@@ -340,19 +403,33 @@ app.post('/process-time', (req, res) => {
   const date = decodeURIComponent(req.query.date || '');
   
   console.log("DEBUG: /process-time - Phone:", phone, "Name:", name, "Date:", date);
-  console.log("DEBUG: SpeechResult:", req.body.SpeechResult);
+  console.log("DEBUG: Raw SpeechResult:", req.body.SpeechResult);
   
   let time = req.body.SpeechResult || '';
   
   if (time && time.trim() !== '') {
-    const cleanedTime = time.trim();
-    console.log("DEBUG: Cleaned time:", cleanedTime);
+    // Clean up common mishearings
+    let cleanedTime = time.trim();
+    
+    // Fix common issues
+    cleanedTime = cleanedTime
+      .replace(/NPM/gi, 'PM')  // Fix "NPM" to "PM"
+      .replace(/MPM/gi, 'PM')  // Fix "MPM" to "PM"
+      .replace(/AMM/gi, 'AM')  // Fix "AMM" to "AM"
+      .replace(/B ?M/gi, 'PM') // Fix "B M" to "PM"
+      .replace(/A ?M/gi, 'AM') // Fix "A M" to "AM"
+      .replace(/P ?M/gi, 'PM') // Fix "P M" to "PM"
+      .replace(/\s+/g, ' ')    // Remove extra spaces
+      .trim();
     
     // Add Pacific Time if not already in time
     let finalTime = cleanedTime;
     if (!finalTime.toLowerCase().includes('pacific') && !finalTime.toLowerCase().includes('pt')) {
       finalTime = `${cleanedTime} Pacific Time`;
     }
+    
+    console.log("DEBUG: Cleaned time:", cleanedTime);
+    console.log("DEBUG: Final time:", finalTime);
     
     // Save appointment
     addAppointment(name, phone, date, finalTime);
@@ -414,7 +491,7 @@ app.post('/callback-request', (req, res) => {
 });
 
 // -------------------------------------------------------
-// VOICEMAIL - UPDATED PROMPT
+// VOICEMAIL
 // -------------------------------------------------------
 app.post('/rep-busy', (req, res) => {
   const twiml = new VoiceResponse();
@@ -464,7 +541,7 @@ app.post('/voicemail-complete', (req, res) => {
 });
 
 // -------------------------------------------------------
-// HEALTH CHECK
+// DEBUG ENDPOINTS
 // -------------------------------------------------------
 app.get('/health', (req, res) => {
   res.status(200).send('✅ IVR Server is running');
@@ -475,8 +552,15 @@ app.get('/debug', (req, res) => {
   res.json({
     status: 'running',
     appointments: db,
-    total: db.length
+    total: db.length,
+    timestamp: new Date().toISOString()
   });
+});
+
+// Clear all appointments (for testing)
+app.get('/clear-appointments', (req, res) => {
+  saveDB([]);
+  res.send('All appointments cleared');
 });
 
 // -------------------------------------------------------
@@ -487,4 +571,5 @@ app.listen(PORT, () => {
   console.log(`✅ IVR server running on port ${PORT}`);
   console.log(`✅ Health check: http://localhost:${PORT}/health`);
   console.log(`✅ Debug: http://localhost:${PORT}/debug`);
+  console.log(`✅ Clear appointments: http://localhost:${PORT}/clear-appointments`);
 });
