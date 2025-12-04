@@ -1,54 +1,44 @@
 const express = require('express');
-const https = require('https');
+const fs = require('fs');
 const VoiceResponse = require('twilio').twiml.VoiceResponse;
-const twilioClient = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const twilioClient = require('twilio')(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
 
 const app = express();
-
-// ❤️ FIXED: Correct Google Web App URL (THE ONE YOU JUST SENT)
-const APPOINTMENTS_API_URL = "https://script.google.com/a/macros/altairpartner.com/s/AKfycbyUc8dA2CMIAfytAlU_T4VXWi3Z9pKGO-LOJT9AwOKumDBaQ0Ju4ehpDfu9fQVHE6BsIQ/exec";
-
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-// SAFE JSON CHECK
-function safeJSON(body) {
-  if (!body || typeof body !== "string") return null;
-  if (body.trim().startsWith("<")) return null; // HTML returned — not JSON
-  try { return JSON.parse(body); }
-  catch { return null; }
+// -------------------------------------------------------
+// JSON DATABASE
+// -------------------------------------------------------
+const DB_PATH = "./appointments.json";
+
+function loadDB() {
+  if (!fs.existsSync(DB_PATH)) return [];
+  return JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
 }
 
-// GOOGLE SHEETS API CALLER
-function callAppointmentsApi(payload) {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify(payload);
-    const url = new URL(APPOINTMENTS_API_URL);
+function saveDB(data) {
+  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+}
 
-    const options = {
-      method: 'POST',
-      hostname: url.hostname,
-      path: url.pathname + url.search,
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(data),
-      },
-    };
+function findAppointment(phone) {
+  const db = loadDB();
+  return db.find(a => a.phone === phone);
+}
 
-    const req = https.request(options, (res) => {
-      let body = '';
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => {
-        const json = safeJSON(body);
-        if (!json) return reject("Google returned invalid JSON");
-        resolve(json);
-      });
-    });
+function addAppointment(name, phone, date, time) {
+  const db = loadDB();
+  db.push({ name, phone, date, time });
+  saveDB(db);
+}
 
-    req.on('error', reject);
-    req.write(data);
-    req.end();
-  });
+function deleteAppointment(phone) {
+  let db = loadDB();
+  db = db.filter(a => a.phone !== phone); 
+  saveDB(db);
 }
 
 // -------------------------------------------------------
@@ -56,7 +46,6 @@ function callAppointmentsApi(payload) {
 // -------------------------------------------------------
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
-
   const gather = twiml.gather({
     numDigits: 1,
     action: '/handle-key',
@@ -75,52 +64,42 @@ app.post('/voice', (req, res) => {
 });
 
 // -------------------------------------------------------
-// HANDLE KEY
+// HANDLE MAIN MENU
 // -------------------------------------------------------
-app.post('/handle-key', async (req, res) => {
+app.post('/handle-key', (req, res) => {
   const twiml = new VoiceResponse();
   const digit = req.body.Digits;
-  const callerPhone = req.body.From;
+  const phone = req.body.From;
 
-  try {
-    if (digit === '1') {
-      const response = await callAppointmentsApi({
-        action: "findAppointment",
-        phone: callerPhone
+  if (digit === '1') {
+    const appt = findAppointment(phone);
+
+    if (appt) {
+      const gather = twiml.gather({
+        numDigits: 1,
+        action: `/appointment-manage?phone=${encodeURIComponent(phone)}`,
+        method: 'POST'
       });
 
-      if (response.status === "found") {
-        const gather = twiml.gather({
-          numDigits: 1,
-          action: `/appointment-manage?row=${response.row}&phone=${encodeURIComponent(callerPhone)}`,
-          method: 'POST'
-        });
-
-        gather.say(
-          `You have an appointment on ${response.date} at ${response.time}. ` +
-          "Press 1 to cancel or 2 to reschedule."
-        );
-
-      } else {
-        twiml.redirect(`/start-appointment?phone=${encodeURIComponent(callerPhone)}`);
-      }
+      gather.say(
+        `You have an appointment on ${appt.date} at ${appt.time}. ` +
+        "Press 1 to cancel or 2 to reschedule."
+      );
+    } else {
+      twiml.redirect(`/start-appointment?phone=${encodeURIComponent(phone)}`);
     }
+  }
 
-    else if (digit === '3') {
-      twiml.redirect('/rep-busy');
-    }
+  else if (digit === '3') {
+    twiml.redirect('/rep-busy');
+  }
 
-    else if (digit === '9') {
-      twiml.redirect('/callback-request');
-    }
+  else if (digit === '9') {
+    twiml.redirect('/callback-request');
+  }
 
-    else {
-      twiml.say("Invalid option.");
-    }
-
-  } catch (err) {
-    console.error("ERROR /handle-key", err);
-    twiml.say("System error. Try again later.");
+  else {
+    twiml.say("Invalid option.");
   }
 
   res.type('text/xml');
@@ -130,31 +109,20 @@ app.post('/handle-key', async (req, res) => {
 // -------------------------------------------------------
 // CANCEL / RESCHEDULE
 // -------------------------------------------------------
-app.post('/appointment-manage', async (req, res) => {
+app.post('/appointment-manage', (req, res) => {
   const twiml = new VoiceResponse();
   const digit = req.body.Digits;
-  const row = Number(req.query.row);
   const phone = req.query.phone;
 
-  try {
-    if (digit === '1') {
-      await callAppointmentsApi({ action: "cancelAppointment", row });
-      twiml.say("Your appointment has been cancelled.");
-    }
+  if (digit === '1') {
+    deleteAppointment(phone);
+    twiml.say("Your appointment has been cancelled.");
+  }
 
-    else if (digit === '2') {
-      await callAppointmentsApi({ action: "cancelAppointment", row });
-      twiml.say("Let's reschedule.");
-      twiml.redirect(`/start-appointment?phone=${encodeURIComponent(phone)}`);
-    }
-
-    else {
-      twiml.say("Invalid choice.");
-    }
-
-  } catch (err) {
-    console.error("ERROR /appointment-manage", err);
-    twiml.say("System failure.");
+  else if (digit === '2') {
+    deleteAppointment(phone);
+    twiml.say("Let's reschedule.");
+    twiml.redirect(`/start-appointment?phone=${encodeURIComponent(phone)}`);
   }
 
   res.type('text/xml');
@@ -162,7 +130,7 @@ app.post('/appointment-manage', async (req, res) => {
 });
 
 // -------------------------------------------------------
-// START APPOINTMENT (NAME)
+// NAME
 // -------------------------------------------------------
 app.post('/start-appointment', (req, res) => {
   const twiml = new VoiceResponse();
@@ -181,7 +149,7 @@ app.post('/start-appointment', (req, res) => {
 });
 
 // -------------------------------------------------------
-// BOOK DATE
+// DATE
 // -------------------------------------------------------
 app.post('/book-date', (req, res) => {
   const twiml = new VoiceResponse();
@@ -194,14 +162,14 @@ app.post('/book-date', (req, res) => {
     method: "POST"
   });
 
-  gather.say(`Thanks ${name}. What day would you like?`);
+  gather.say(`Thanks ${name}. What day works for you?`);
 
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
 // -------------------------------------------------------
-// BOOK TIME
+// TIME
 // -------------------------------------------------------
 app.post('/book-time', (req, res) => {
   const twiml = new VoiceResponse();
@@ -222,35 +190,23 @@ app.post('/book-time', (req, res) => {
 });
 
 // -------------------------------------------------------
-// CONFIRM BOOKING
+// SAVE APPOINTMENT
 // -------------------------------------------------------
-app.post('/confirm-booking', async (req, res) => {
+app.post('/confirm-booking', (req, res) => {
   const twiml = new VoiceResponse();
   const time = req.body.SpeechResult;
   const { phone, name, date } = req.query;
 
-  try {
-    await callAppointmentsApi({
-      action: "addAppointment",
-      name,
-      phone,
-      date,
-      time
-    });
+  addAppointment(name, phone, date, time);
 
-    twiml.say(`Your appointment for ${date} at ${time} has been saved.`);
-
-  } catch (err) {
-    console.error("ERROR /confirm-booking", err);
-    twiml.say("Could not save appointment.");
-  }
+  twiml.say(`Your appointment for ${date} at ${time} has been saved.`);
 
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
 // -------------------------------------------------------
-// CALLBACK REQUEST
+// CALLBACK
 // -------------------------------------------------------
 app.post('/callback-request', (req, res) => {
   const twiml = new VoiceResponse();
@@ -304,4 +260,4 @@ app.post('/voicemail-complete', (req, res) => {
 // -------------------------------------------------------
 // START SERVER
 // -------------------------------------------------------
-app.listen(1337, () => console.log("IVR server running."));
+app.listen(1337, () => console.log("IVR server running (JSON mode)."));
