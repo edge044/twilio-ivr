@@ -5,8 +5,8 @@ const twilioClient = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.e
 
 const app = express();
 
-// Google Sheets Apps Script Web App URL
-const APPOINTMENTS_API_URL = "https://script.google.com/a/macros/altairpartner.com/s/AKfycbzCF_Mj7M8UWORdGvKjVVxNH_Pn2SYvp4KLG10T7Rx1tHsW9ctk_ndDYZrYFEbL4PKhHQ/exec";
+// ✅ NEW Google Sheets Apps Script Web App URL (USE THIS)
+const APPOINTMENTS_API_URL = "https://script.google.com/macros/s/AKfycbzt-ns9b2nE9fnfmYv62YMnjMIYU65rBbhEHgfZAtr9_RseYXtffzj2LBJNA1W9RrE/exec";
 
 // Middleware
 app.use(express.urlencoded({ extended: false }));
@@ -57,7 +57,7 @@ function callAppointmentsApi(payload) {
 
 
 // -------------------------------------------------------
-// MAIN IVR MENU (ALTAIR PARTNERS)
+// MAIN IVR MENU
 // -------------------------------------------------------
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
@@ -89,30 +89,24 @@ app.post('/handle-key', async (req, res) => {
 
   try {
     if (digit === '1') {
-      // Check if this caller already has an appointment
       const response = await callAppointmentsApi({
         action: "findAppointment",
         phone: callerPhone
       });
 
       if (response.status === "found") {
-        const date = response.date;
-        const time = response.time;
-        const row = response.row;
-
         const gather = twiml.gather({
           numDigits: 1,
-          action: `/appointment-manage?row=${encodeURIComponent(row)}&phone=${encodeURIComponent(callerPhone)}`,
+          action: `/appointment-manage?row=${encodeURIComponent(response.row)}&phone=${encodeURIComponent(callerPhone)}`,
           method: 'POST'
         });
 
         gather.say(
-          `I see you have an appointment on ${date} at ${time} Pacific time. ` +
+          `I see you have an appointment on ${response.date} at ${response.time} Pacific time. ` +
           "Press 1 to cancel this appointment. Press 2 to reschedule it."
         );
 
       } else {
-        // No appointment → start new booking
         twiml.redirect(`/start-appointment?phone=${encodeURIComponent(callerPhone)}`);
       }
 
@@ -124,8 +118,9 @@ app.post('/handle-key', async (req, res) => {
       twiml.redirect('/callback-request');
 
     } else {
-      twiml.say("Invalid choice. Goodbye.");
+      twiml.say("Invalid option. Goodbye.");
     }
+
   } catch (err) {
     console.error("Error in /handle-key:", err);
     twiml.say("We are experiencing technical difficulties. Please try again later.");
@@ -147,7 +142,6 @@ app.post('/appointment-manage', async (req, res) => {
 
   try {
     if (digit === '1') {
-      // Cancel appointment
       await callAppointmentsApi({
         action: "cancelAppointment",
         row: Number(row)
@@ -156,7 +150,6 @@ app.post('/appointment-manage', async (req, res) => {
       twiml.say("Your appointment has been cancelled. Goodbye.");
 
     } else if (digit === '2') {
-      // Reschedule = cancel + restart booking
       await callAppointmentsApi({
         action: "cancelAppointment",
         row: Number(row)
@@ -168,6 +161,7 @@ app.post('/appointment-manage', async (req, res) => {
     } else {
       twiml.say("Invalid choice. Goodbye.");
     }
+
   } catch (err) {
     console.error("Error in /appointment-manage:", err);
     twiml.say("We are experiencing difficulties. Please try later.");
@@ -242,7 +236,7 @@ app.post('/book-time', (req, res) => {
 
 
 // -------------------------------------------------------
-// CONFIRM & SAVE APPOINTMENT TO GOOGLE SHEETS
+// CONFIRM & SAVE APPOINTMENT
 // -------------------------------------------------------
 app.post('/confirm-booking', async (req, res) => {
   const twiml = new VoiceResponse();
@@ -293,7 +287,7 @@ app.post('/callback-request', (req, res) => {
 
 
 // -------------------------------------------------------
-// REP BUSY → VOICEMAIL
+// REPRESENTATIVE BUSY → VOICEMAIL
 // -------------------------------------------------------
 app.post('/rep-busy', (req, res) => {
   const twiml = new VoiceResponse();
