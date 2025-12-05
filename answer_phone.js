@@ -102,7 +102,7 @@ function deleteAppointment(phone) {
 }
 
 // -------------------------------------------------------
-// MAIN MENU - NO MENTION OF AI
+// MAIN MENU
 // -------------------------------------------------------
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
@@ -181,7 +181,7 @@ app.post('/handle-key', (req, res) => {
     }
   }
 
-  else if (digit === '2') { // REPRESENTATIVE - NOT AI
+  else if (digit === '2') { // REPRESENTATIVE
     console.log("DEBUG: Option 2 selected - Representative");
     twiml.redirect('/connect-representative');
   }
@@ -202,7 +202,7 @@ app.post('/handle-key', (req, res) => {
 });
 
 // -------------------------------------------------------
-// CONNECT REPRESENTATIVE - PROMO MESSAGE + BEEPS
+// CONNECT REPRESENTATIVE - НАСТОЯЩИЕ БИПЫ + ЧЕЛОВЕЧЕСКИЙ ГОЛОС
 // -------------------------------------------------------
 app.post('/connect-representative', (req, res) => {
   const twiml = new VoiceResponse();
@@ -215,49 +215,44 @@ app.post('/connect-representative', (req, res) => {
     { voice: 'alice', language: 'en-US' }
   );
 
-  // PROMO MESSAGE instead of music
-  twiml.say(
-    "Did you know that Altair Partners offers 10 percent off for local small businesses?",
-    { voice: 'alice', language: 'en-US' }
-  );
-  
-  // Short pause after promo
-  twiml.pause({ length: 1 });
+  // Пауза 3 секунды (типа соединение)
+  twiml.pause({ length: 3 });
 
-  // Play 3 beeps using say (simple solution)
-  twiml.say("beep", { voice: 'alice', language: 'en-US' });
-  twiml.pause({ length: 0.5 });
+  // 3 НАСТОЯЩИХ БИПА (DTMF тоны)
+  // w = wait 0.5 секунды, 1 = DTMF tone 1 (бип)
+  twiml.play({ digits: 'w1' }); // Бип 1
+  twiml.pause({ length: 0.3 });
   
-  twiml.say("beep", { voice: 'alice', language: 'en-US' });
-  twiml.pause({ length: 0.5 });
+  twiml.play({ digits: 'w1' }); // Бип 2
+  twiml.pause({ length: 0.3 });
   
-  twiml.say("beep", { voice: 'alice', language: 'en-US' });
+  twiml.play({ digits: 'w1' }); // Бип 3
   twiml.pause({ length: 0.5 });
 
-  // After beeps, "representative answers" with human-like voice
+  // После бипов - ЧЕЛОВЕЧЕСКИЙ ГОЛОС (Polly.Joanna-Neural)
   twiml.say(
     "Thank you for choosing Altair Partners. How can I help you?",
     { 
-      voice: 'Google.en-US-Standard-B', // Male voice
+      voice: 'Polly.Joanna-Neural', // САМЫЙ ЧЕЛОВЕЧЕСКИЙ ГОЛОС
       language: 'en-US'
     }
   );
 
-  // Now listen for speech with NO DELAY
+  // Слушаем речь БЕЗ ЗАДЕРЖКИ
   const gather = twiml.gather({
     input: 'speech',
     action: '/process-representative-question',
     method: 'POST',
-    speechTimeout: 1, // SHORT timeout - no delay
+    speechTimeout: 1, // ОЧЕНЬ КОРОТКИЙ ТАЙМАУТ
     timeout: 10,
     speechModel: 'phone_call',
     enhanced: true,
     profanityFilter: false
   });
 
-  // If no speech, redirect to voicemail
+  // Если не услышал вопрос
   twiml.say("I didn't hear your question. Let me transfer you to our messaging system.", { 
-    voice: 'Google.en-US-Standard-B', 
+    voice: 'Polly.Joanna-Neural', 
     language: 'en-US' 
   });
   twiml.redirect('/rep-busy');
@@ -267,7 +262,7 @@ app.post('/connect-representative', (req, res) => {
 });
 
 // -------------------------------------------------------
-// PROCESS REPRESENTATIVE QUESTION - FAST RESPONSE
+// PROCESS REPRESENTATIVE QUESTION - ЧЕЛОВЕЧЕСКИЙ ГОЛОС
 // -------------------------------------------------------
 app.post('/process-representative-question', (req, res) => {
   const twiml = new VoiceResponse();
@@ -279,21 +274,21 @@ app.post('/process-representative-question', (req, res) => {
   
   if (!question || question.trim() === '') {
     twiml.say("I didn't hear your question. Let's try again.", { 
-      voice: 'Google.en-US-Standard-B', 
+      voice: 'Polly.Joanna-Neural', 
       language: 'en-US' 
     });
     twiml.redirect('/connect-representative');
     return res.type('text/xml').send(twiml.toString());
   }
   
-  // SIMPLE RESPONSES (NO AI) - FAST RESPONSE, NO DELAY
+  // ПРОСТЫЕ ОТВЕТЫ - ЧЕЛОВЕЧЕСКИМ ГОЛОСОМ
   const lowerQuestion = question.toLowerCase();
   
   if (lowerQuestion.includes('hour') || lowerQuestion.includes('open') || lowerQuestion.includes('time')) {
     twiml.say(
       "Our office hours are Monday to Friday, 9 AM to 6 PM Pacific Time.",
       { 
-        voice: 'Google.en-US-Standard-B', 
+        voice: 'Polly.Joanna-Neural', 
         language: 'en-US' 
       }
     );
@@ -302,7 +297,7 @@ app.post('/process-representative-question', (req, res) => {
     twiml.say(
       "We are located in San Francisco, California.",
       { 
-        voice: 'Google.en-US-Standard-B', 
+        voice: 'Polly.Joanna-Neural', 
         language: 'en-US' 
       }
     );
@@ -311,7 +306,7 @@ app.post('/process-representative-question', (req, res) => {
     twiml.say(
       "We provide business consulting, financial advisory, and strategic planning services.",
       { 
-        voice: 'Google.en-US-Standard-B', 
+        voice: 'Polly.Joanna-Neural', 
         language: 'en-US' 
       }
     );
@@ -320,11 +315,11 @@ app.post('/process-representative-question', (req, res) => {
     twiml.say(
       "For appointments, I'll transfer you to our booking system.",
       { 
-        voice: 'Google.en-US-Standard-B', 
+        voice: 'Polly.Joanna-Neural', 
         language: 'en-US' 
       }
     );
-    twiml.pause({ length: 0.5 }); // Short pause
+    twiml.pause({ length: 0.5 });
     twiml.redirect('/voice');
     return res.type('text/xml').send(twiml.toString());
   }
@@ -332,11 +327,11 @@ app.post('/process-representative-question', (req, res) => {
     twiml.say(
       "For canceling or rescheduling appointments, I'll transfer you to our booking system.",
       { 
-        voice: 'Google.en-US-Standard-B', 
+        voice: 'Polly.Joanna-Neural', 
         language: 'en-US' 
       }
     );
-    twiml.pause({ length: 0.5 }); // Short pause
+    twiml.pause({ length: 0.5 });
     twiml.redirect('/voice');
     return res.type('text/xml').send(twiml.toString());
   }
@@ -344,50 +339,41 @@ app.post('/process-representative-question', (req, res) => {
     twiml.say(
       "I'll connect you with a human representative.",
       { 
-        voice: 'Google.en-US-Standard-B', 
+        voice: 'Polly.Joanna-Neural', 
         language: 'en-US' 
       }
     );
     twiml.redirect('/rep-busy');
     return res.type('text/xml').send(twiml.toString());
   }
-  else if (lowerQuestion.includes('discount') || lowerQuestion.includes('percent') || lowerQuestion.includes('10')) {
-    twiml.say(
-      "Yes, Altair Partners offers 10 percent discount for local small businesses. Would you like to schedule a consultation?",
-      { 
-        voice: 'Google.en-US-Standard-B', 
-        language: 'en-US' 
-      }
-    );
-  }
   else {
-    // Default response
+    // Дефолтный ответ
     twiml.say(
-      "Thank you for your question. I can help with appointments, business hours, location, services, and discounts. What else can I help you with?",
+      "Thank you for your question. I can help with appointments, business hours, location, and services. What else can I help you with?",
       { 
-        voice: 'Google.en-US-Standard-B', 
+        voice: 'Polly.Joanna-Neural', 
         language: 'en-US' 
       }
     );
   }
   
-  // Continue conversation - FAST response, no delay
+  // Продолжаем разговор - БЫСТРО
   const gather = twiml.gather({
     input: 'speech',
     action: '/process-representative-question',
     method: 'POST',
-    speechTimeout: 1, // VERY SHORT timeout
+    speechTimeout: 1, // ОЧЕНЬ КОРОТКО
     timeout: 10,
     speechModel: 'phone_call',
     enhanced: true
   });
   
   gather.say("What else can I help you with?", { 
-    voice: 'Google.en-US-Standard-B', 
+    voice: 'Polly.Joanna-Neural', 
     language: 'en-US' 
   });
   
-  // Option to go back to menu
+  // Опция вернуться в меню
   twiml.say("Or press any key to return to the main menu.");
   twiml.redirect('/voice');
   
@@ -447,7 +433,7 @@ app.post('/get-name', (req, res) => {
     input: 'speech',
     action: `/process-name?phone=${encodeURIComponent(phone)}`,
     method: 'POST',
-    speechTimeout: 2, // Shorter timeout
+    speechTimeout: 2,
     timeout: 8,
     speechModel: 'numbers_and_commands',
     enhanced: true,
@@ -504,7 +490,7 @@ app.post('/get-date', (req, res) => {
     input: 'speech',
     action: `/process-date?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}`,
     method: 'POST',
-    speechTimeout: 2, // Shorter timeout
+    speechTimeout: 2,
     timeout: 8,
     speechModel: 'numbers_and_commands',
     enhanced: true,
@@ -551,7 +537,7 @@ app.post('/process-date', (req, res) => {
 });
 
 // -------------------------------------------------------
-// GET TIME - NO DELAY
+// GET TIME
 // -------------------------------------------------------
 app.post('/get-time', (req, res) => {
   const twiml = new VoiceResponse();
@@ -565,7 +551,7 @@ app.post('/get-time', (req, res) => {
     input: 'speech',
     action: `/process-time?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}&date=${encodeURIComponent(date)}`,
     method: 'POST',
-    speechTimeout: 2, // Shorter timeout
+    speechTimeout: 2,
     timeout: 8,
     speechModel: 'numbers_and_commands',
     enhanced: true,
