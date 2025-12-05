@@ -120,7 +120,7 @@ app.post('/voice', (req, res) => {
   gather.say(
     "Thank you for choosing Altair Partners. This call may be monitored for quality assurance. " +
     "Press 1 to schedule or cancel an appointment. " +
-    "Press 2 to speak with a representative. " + // NO AI MENTION
+    "Press 2 to speak with a representative. " +
     "Press 3 to request a callback.",
     { voice: 'alice', language: 'en-US' }
   );
@@ -202,7 +202,7 @@ app.post('/handle-key', (req, res) => {
 });
 
 // -------------------------------------------------------
-// CONNECT REPRESENTATIVE - WITH HOLD MUSIC & BEEPS
+// CONNECT REPRESENTATIVE - WITH HOLD MUSIC & BEEPS (FIXED)
 // -------------------------------------------------------
 app.post('/connect-representative', (req, res) => {
   const twiml = new VoiceResponse();
@@ -215,8 +215,12 @@ app.post('/connect-representative', (req, res) => {
     { voice: 'alice', language: 'en-US' }
   );
 
-  // Play hold music for 4 seconds
-  twiml.play({}, 'https://demo.twilio.com/docs/classic.mp3');
+  // Play hold music for EXACTLY 4 seconds
+  twiml.play({
+    loop: 1
+  }, 'https://demo.twilio.com/docs/classic.mp3');
+  
+  // Pause to ensure music plays for 4 seconds
   twiml.pause({ length: 4 });
 
   // Play 3 beeps (using say with short pauses)
@@ -228,7 +232,6 @@ app.post('/connect-representative', (req, res) => {
   twiml.pause({ length: 0.5 });
 
   // After beeps, "representative answers" with human-like voice
-  // Using Google voices for more natural sound
   twiml.say(
     "Thank you for choosing Altair Partners. How can I help you?",
     { 
