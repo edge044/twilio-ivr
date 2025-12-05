@@ -334,6 +334,7 @@ app.post('/process-representative-question', (req, res) => {
       { 
         voice: 'Google.en-US-Standard-B', 
         language: 'en-US' 
+      }
     );
     twiml.pause({ length: 0.5 }); // Short pause
     twiml.redirect('/voice');
