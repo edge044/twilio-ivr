@@ -202,7 +202,7 @@ app.post('/handle-key', (req, res) => {
 });
 
 // -------------------------------------------------------
-// CONNECT REPRESENTATIVE - WITH HOLD MUSIC & BEEPS (FIXED)
+// CONNECT REPRESENTATIVE - PROMO MESSAGE + BEEPS
 // -------------------------------------------------------
 app.post('/connect-representative', (req, res) => {
   const twiml = new VoiceResponse();
@@ -215,19 +215,22 @@ app.post('/connect-representative', (req, res) => {
     { voice: 'alice', language: 'en-US' }
   );
 
-  // Play hold music for EXACTLY 4 seconds
-  twiml.play({
-    loop: 1
-  }, 'https://demo.twilio.com/docs/classic.mp3');
+  // PROMO MESSAGE instead of music
+  twiml.say(
+    "Did you know that Altair Partners offers 10 percent off for local small businesses?",
+    { voice: 'alice', language: 'en-US' }
+  );
   
-  // Pause to ensure music plays for 4 seconds
-  twiml.pause({ length: 4 });
+  // Short pause after promo
+  twiml.pause({ length: 1 });
 
-  // Play 3 beeps (using say with short pauses)
+  // Play 3 beeps using say (simple solution)
   twiml.say("beep", { voice: 'alice', language: 'en-US' });
   twiml.pause({ length: 0.5 });
+  
   twiml.say("beep", { voice: 'alice', language: 'en-US' });
   twiml.pause({ length: 0.5 });
+  
   twiml.say("beep", { voice: 'alice', language: 'en-US' });
   twiml.pause({ length: 0.5 });
 
@@ -331,7 +334,6 @@ app.post('/process-representative-question', (req, res) => {
       { 
         voice: 'Google.en-US-Standard-B', 
         language: 'en-US' 
-      }
     );
     twiml.pause({ length: 0.5 }); // Short pause
     twiml.redirect('/voice');
@@ -348,10 +350,19 @@ app.post('/process-representative-question', (req, res) => {
     twiml.redirect('/rep-busy');
     return res.type('text/xml').send(twiml.toString());
   }
+  else if (lowerQuestion.includes('discount') || lowerQuestion.includes('percent') || lowerQuestion.includes('10')) {
+    twiml.say(
+      "Yes, Altair Partners offers 10 percent discount for local small businesses. Would you like to schedule a consultation?",
+      { 
+        voice: 'Google.en-US-Standard-B', 
+        language: 'en-US' 
+      }
+    );
+  }
   else {
     // Default response
     twiml.say(
-      "Thank you for your question. I can help with appointments, business hours, location, and services. What else can I help you with?",
+      "Thank you for your question. I can help with appointments, business hours, location, services, and discounts. What else can I help you with?",
       { 
         voice: 'Google.en-US-Standard-B', 
         language: 'en-US' 
