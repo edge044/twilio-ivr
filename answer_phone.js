@@ -5,56 +5,13 @@ const twilioClient = require('twilio')(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
 );
-const { OpenAI } = require('openai');
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
 // -------------------------------------------------------
-// OPENAI SETUP
-// -------------------------------------------------------
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || 'your-openai-key-here'
-});
-
-// Business context for AI
-const BUSINESS_CONTEXT = `
-You are Alex, the friendly AI representative for Altair Partners.
-You help customers with appointments, questions, and information.
-
-BUSINESS INFO:
-- Company: Altair Partners
-- Services: Business consulting, financial advisory, strategic planning
-- Hours: Monday-Friday 9AM-6PM Pacific Time
-- Location: San Francisco, California
-- Contact: (555) 123-4567
-- Email: info@altairpartners.com
-
-APPOINTMENT INFO:
-- Appointments are scheduled in Pacific Time
-- Need name, date (month and day), and time
-- One appointment per customer
-- Can reschedule or cancel existing appointments
-
-HOW TO HELP:
-1. Be friendly, professional, helpful
-2. Answer questions clearly
-3. If you don't know, say you'll connect them to a human
-4. Keep responses concise for phone
-5. For appointment booking, transfer to IVR system
-6. Speak naturally, not robotic
-
-COMMON QUESTIONS:
-- "What are your hours?" → "We're open Monday to Friday, 9 AM to 6 PM Pacific Time."
-- "Where are you located?" → "Our office is in San Francisco, California."
-- "What services do you offer?" → "We provide business consulting, financial advisory, and strategic planning services."
-- "How do I book an appointment?" → "I can transfer you to our booking system, or you can press 1 from the main menu."
-- "Can I cancel my appointment?" → "Yes, press 1 from the main menu to cancel or reschedule."
-`;
-
-// -------------------------------------------------------
-// JSON DATABASE - IMPROVED
+// JSON DATABASE
 // -------------------------------------------------------
 const DB_PATH = "./appointments.json";
 
@@ -89,7 +46,6 @@ function findAppointment(phone) {
   console.log(`DEBUG: Looking for appointment for phone: ${phone}`);
   console.log(`DEBUG: Database has ${db.length} appointments`);
   
-  // Normalize phone number (remove +, spaces, etc.)
   const normalizedPhone = phone.replace(/\D/g, '');
   
   const appointment = db.find(a => {
@@ -109,14 +65,12 @@ function findAppointment(phone) {
 function addAppointment(name, phone, date, time) {
   const db = loadDB();
   
-  // Remove existing appointment for this phone first
   const normalizedPhone = phone.replace(/\D/g, '');
   const filteredDB = db.filter(a => {
     const normalizedApptPhone = a.phone.replace(/\D/g, '');
     return normalizedApptPhone !== normalizedPhone;
   });
   
-  // Add new appointment
   filteredDB.push({ 
     name, 
     phone,
@@ -148,79 +102,7 @@ function deleteAppointment(phone) {
 }
 
 // -------------------------------------------------------
-// AI REPRESENTATIVE CHATBOT
-// -------------------------------------------------------
-async function handleAIQuestion(question, phone) {
-  try {
-    console.log(`AI Question from ${phone}: ${question}`);
-    
-    // Get user's appointment info if they have one
-    let appointmentContext = '';
-    const appointment = findAppointment(phone);
-    if (appointment) {
-      appointmentContext = `This customer has an appointment on ${appointment.date} at ${appointment.time}.`;
-    }
-    
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo", // CHANGED from gpt-4-turbo-preview to gpt-3.5-turbo
-      messages: [
-        {
-          role: "system",
-          content: `${BUSINESS_CONTEXT}\n\n${appointmentContext}\n\nIMPORTANT: Your response must be under 2 sentences for phone. Speak naturally.`
-        },
-        {
-          role: "user",
-          content: question
-        }
-      ],
-      max_tokens: 100,
-      temperature: 0.7
-    });
-    
-    const response = completion.choices[0].message.content;
-    console.log(`AI Response: ${response}`);
-    
-    // Check if AI suggests transferring to human/booking
-    const lowerResponse = response.toLowerCase();
-    if (lowerResponse.includes('transfer') || 
-        lowerResponse.includes('booking') || 
-        lowerResponse.includes('press 1') ||
-        lowerResponse.includes('schedule') ||
-        question.toLowerCase().includes('book') ||
-        question.toLowerCase().includes('appointment')) {
-      
-      return {
-        text: response,
-        action: 'transfer_to_booking'
-      };
-    }
-    
-    if (lowerResponse.includes('human') || 
-        lowerResponse.includes('representative') ||
-        question.toLowerCase().includes('speak to human')) {
-      
-      return {
-        text: response,
-        action: 'transfer_to_human'
-      };
-    }
-    
-    return {
-      text: response,
-      action: 'continue_chat'
-    };
-    
-  } catch (error) {
-    console.error("AI Error:", error);
-    return {
-      text: "I'm having trouble connecting. Let me transfer you to our booking system instead.",
-      action: 'transfer_to_booking'
-    };
-  }
-}
-
-// -------------------------------------------------------
-// MAIN MENU
+// MAIN MENU - NO MENTION OF AI
 // -------------------------------------------------------
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
@@ -238,7 +120,7 @@ app.post('/voice', (req, res) => {
   gather.say(
     "Thank you for choosing Altair Partners. This call may be monitored for quality assurance. " +
     "Press 1 to schedule or cancel an appointment. " +
-    "Press 2 to speak with our AI representative. " +
+    "Press 2 to speak with a representative. " + // NO AI MENTION
     "Press 3 to request a callback.",
     { voice: 'alice', language: 'en-US' }
   );
@@ -252,7 +134,7 @@ app.post('/voice', (req, res) => {
 });
 
 // -------------------------------------------------------
-// HANDLE MAIN MENU - UPDATED FOR AI
+// HANDLE MAIN MENU
 // -------------------------------------------------------
 app.post('/handle-key', (req, res) => {
   const twiml = new VoiceResponse();
@@ -299,9 +181,9 @@ app.post('/handle-key', (req, res) => {
     }
   }
 
-  else if (digit === '2') { // AI REPRESENTATIVE
-    console.log("DEBUG: Option 2 selected - AI Representative");
-    twiml.redirect('/ai-representative');
+  else if (digit === '2') { // REPRESENTATIVE - NOT AI
+    console.log("DEBUG: Option 2 selected - Representative");
+    twiml.redirect('/connect-representative');
   }
 
   else if (digit === '3') { // CALLBACK
@@ -320,86 +202,179 @@ app.post('/handle-key', (req, res) => {
 });
 
 // -------------------------------------------------------
-// AI REPRESENTATIVE ENDPOINT
+// CONNECT REPRESENTATIVE - WITH HOLD MUSIC & BEEPS
 // -------------------------------------------------------
-app.post('/ai-representative', (req, res) => {
+app.post('/connect-representative', (req, res) => {
   const twiml = new VoiceResponse();
   
-  console.log("DEBUG: /ai-representative endpoint hit");
-  
+  console.log("DEBUG: /connect-representative endpoint hit");
+
+  // Say "please wait" with robot voice
+  twiml.say(
+    "Please wait while I connect you with one of our representatives.",
+    { voice: 'alice', language: 'en-US' }
+  );
+
+  // Play hold music for 4 seconds
+  twiml.play({}, 'https://demo.twilio.com/docs/classic.mp3');
+  twiml.pause({ length: 4 });
+
+  // Play 3 beeps (using say with short pauses)
+  twiml.say("beep", { voice: 'alice', language: 'en-US' });
+  twiml.pause({ length: 0.5 });
+  twiml.say("beep", { voice: 'alice', language: 'en-US' });
+  twiml.pause({ length: 0.5 });
+  twiml.say("beep", { voice: 'alice', language: 'en-US' });
+  twiml.pause({ length: 0.5 });
+
+  // After beeps, "representative answers" with human-like voice
+  // Using Google voices for more natural sound
+  twiml.say(
+    "Thank you for choosing Altair Partners. How can I help you?",
+    { 
+      voice: 'Google.en-US-Standard-B', // Male voice
+      language: 'en-US'
+    }
+  );
+
+  // Now listen for speech with NO DELAY
   const gather = twiml.gather({
     input: 'speech',
-    action: '/process-ai-question',
+    action: '/process-representative-question',
     method: 'POST',
-    speechTimeout: 5,
-    timeout: 30, // Longer timeout for conversation
+    speechTimeout: 1, // SHORT timeout - no delay
+    timeout: 10,
     speechModel: 'phone_call',
     enhanced: true,
     profanityFilter: false
   });
-  
-  gather.say(
-    "Hello! I'm Alex, your AI representative at Altair Partners. " +
-    "How can I help you today? You can ask me about our services, hours, location, or appointments. " +
-    "If you want to book or manage an appointment, I can transfer you to our booking system.",
-    { voice: 'alice', language: 'en-US' }
-  );
-  
-  // If no speech detected
-  twiml.say("I didn't hear your question. Let me transfer you to our main menu.");
-  twiml.redirect('/voice');
+
+  // If no speech, redirect to voicemail
+  twiml.say("I didn't hear your question. Let me transfer you to our messaging system.", { 
+    voice: 'Google.en-US-Standard-B', 
+    language: 'en-US' 
+  });
+  twiml.redirect('/rep-busy');
   
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
-app.post('/process-ai-question', async (req, res) => {
+// -------------------------------------------------------
+// PROCESS REPRESENTATIVE QUESTION - FAST RESPONSE
+// -------------------------------------------------------
+app.post('/process-representative-question', (req, res) => {
   const twiml = new VoiceResponse();
   const question = req.body.SpeechResult || '';
   const phone = req.body.From;
   
-  console.log("DEBUG: /process-ai-question - Phone:", phone);
+  console.log("DEBUG: /process-representative-question - Phone:", phone);
   console.log("DEBUG: Question:", question);
   
   if (!question || question.trim() === '') {
-    twiml.say("I didn't hear your question. Let's try again.");
-    twiml.redirect('/ai-representative');
+    twiml.say("I didn't hear your question. Let's try again.", { 
+      voice: 'Google.en-US-Standard-B', 
+      language: 'en-US' 
+    });
+    twiml.redirect('/connect-representative');
     return res.type('text/xml').send(twiml.toString());
   }
   
-  // Get AI response
-  const aiResponse = await handleAIQuestion(question, phone);
+  // SIMPLE RESPONSES (NO AI) - FAST RESPONSE, NO DELAY
+  const lowerQuestion = question.toLowerCase();
   
-  // Speak the AI response
-  twiml.say(aiResponse.text, { voice: 'alice', language: 'en-US' });
-  
-  // Handle AI's suggested action
-  if (aiResponse.action === 'transfer_to_booking') {
-    twiml.pause(1);
-    twiml.say("Transferring you to our booking system now.");
+  if (lowerQuestion.includes('hour') || lowerQuestion.includes('open') || lowerQuestion.includes('time')) {
+    twiml.say(
+      "Our office hours are Monday to Friday, 9 AM to 6 PM Pacific Time.",
+      { 
+        voice: 'Google.en-US-Standard-B', 
+        language: 'en-US' 
+      }
+    );
+  }
+  else if (lowerQuestion.includes('where') || lowerQuestion.includes('location') || lowerQuestion.includes('address')) {
+    twiml.say(
+      "We are located in San Francisco, California.",
+      { 
+        voice: 'Google.en-US-Standard-B', 
+        language: 'en-US' 
+      }
+    );
+  }
+  else if (lowerQuestion.includes('service') || lowerQuestion.includes('what do you') || lowerQuestion.includes('help')) {
+    twiml.say(
+      "We provide business consulting, financial advisory, and strategic planning services.",
+      { 
+        voice: 'Google.en-US-Standard-B', 
+        language: 'en-US' 
+      }
+    );
+  }
+  else if (lowerQuestion.includes('appointment') || lowerQuestion.includes('book') || lowerQuestion.includes('schedule')) {
+    twiml.say(
+      "For appointments, I'll transfer you to our booking system.",
+      { 
+        voice: 'Google.en-US-Standard-B', 
+        language: 'en-US' 
+      }
+    );
+    twiml.pause({ length: 0.5 }); // Short pause
     twiml.redirect('/voice');
-  } 
-  else if (aiResponse.action === 'transfer_to_human') {
-    twiml.pause(1);
-    twiml.say("Let me connect you with a human representative.");
+    return res.type('text/xml').send(twiml.toString());
+  }
+  else if (lowerQuestion.includes('cancel') || lowerQuestion.includes('reschedule')) {
+    twiml.say(
+      "For canceling or rescheduling appointments, I'll transfer you to our booking system.",
+      { 
+        voice: 'Google.en-US-Standard-B', 
+        language: 'en-US' 
+      }
+    );
+    twiml.pause({ length: 0.5 }); // Short pause
+    twiml.redirect('/voice');
+    return res.type('text/xml').send(twiml.toString());
+  }
+  else if (lowerQuestion.includes('human') || lowerQuestion.includes('speak to real')) {
+    twiml.say(
+      "I'll connect you with a human representative.",
+      { 
+        voice: 'Google.en-US-Standard-B', 
+        language: 'en-US' 
+      }
+    );
     twiml.redirect('/rep-busy');
+    return res.type('text/xml').send(twiml.toString());
   }
-  else if (aiResponse.action === 'continue_chat') {
-    // Continue conversation
-    const gather = twiml.gather({
-      input: 'speech',
-      action: '/process-ai-question',
-      method: 'POST',
-      speechTimeout: 5,
-      timeout: 30
-    });
-    
-    gather.say("Is there anything else I can help you with?", { voice: 'alice', language: 'en-US' });
-    
-    // Option to go back to menu
-    twiml.say("Or press any key to return to the main menu.");
-    twiml.redirect('/voice');
+  else {
+    // Default response
+    twiml.say(
+      "Thank you for your question. I can help with appointments, business hours, location, and services. What else can I help you with?",
+      { 
+        voice: 'Google.en-US-Standard-B', 
+        language: 'en-US' 
+      }
+    );
   }
+  
+  // Continue conversation - FAST response, no delay
+  const gather = twiml.gather({
+    input: 'speech',
+    action: '/process-representative-question',
+    method: 'POST',
+    speechTimeout: 1, // VERY SHORT timeout
+    timeout: 10,
+    speechModel: 'phone_call',
+    enhanced: true
+  });
+  
+  gather.say("What else can I help you with?", { 
+    voice: 'Google.en-US-Standard-B', 
+    language: 'en-US' 
+  });
+  
+  // Option to go back to menu
+  twiml.say("Or press any key to return to the main menu.");
+  twiml.redirect('/voice');
   
   res.type('text/xml');
   res.send(twiml.toString());
@@ -457,8 +432,8 @@ app.post('/get-name', (req, res) => {
     input: 'speech',
     action: `/process-name?phone=${encodeURIComponent(phone)}`,
     method: 'POST',
-    speechTimeout: 3,
-    timeout: 10,
+    speechTimeout: 2, // Shorter timeout
+    timeout: 8,
     speechModel: 'numbers_and_commands',
     enhanced: true,
     profanityFilter: false
@@ -483,7 +458,6 @@ app.post('/process-name', (req, res) => {
   let name = req.body.SpeechResult || '';
   
   if (name && name.trim() !== '') {
-    // Take only first word and capitalize
     const firstName = name.split(' ')[0];
     const cleanedName = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
     
@@ -515,8 +489,8 @@ app.post('/get-date', (req, res) => {
     input: 'speech',
     action: `/process-date?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}`,
     method: 'POST',
-    speechTimeout: 3,
-    timeout: 10,
+    speechTimeout: 2, // Shorter timeout
+    timeout: 8,
     speechModel: 'numbers_and_commands',
     enhanced: true,
     profanityFilter: false
@@ -562,7 +536,7 @@ app.post('/process-date', (req, res) => {
 });
 
 // -------------------------------------------------------
-// GET TIME
+// GET TIME - NO DELAY
 // -------------------------------------------------------
 app.post('/get-time', (req, res) => {
   const twiml = new VoiceResponse();
@@ -576,8 +550,8 @@ app.post('/get-time', (req, res) => {
     input: 'speech',
     action: `/process-time?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(name)}&date=${encodeURIComponent(date)}`,
     method: 'POST',
-    speechTimeout: 3,
-    timeout: 10,
+    speechTimeout: 2, // Shorter timeout
+    timeout: 8,
     speechModel: 'numbers_and_commands',
     enhanced: true,
     profanityFilter: false
@@ -609,10 +583,8 @@ app.post('/process-time', (req, res) => {
   let time = req.body.SpeechResult || '';
   
   if (time && time.trim() !== '') {
-    // Clean up common mishearings
     let cleanedTime = time.trim();
     
-    // Fix common issues
     cleanedTime = cleanedTime
       .replace(/NPM/gi, 'PM')
       .replace(/MPM/gi, 'PM')
@@ -623,7 +595,6 @@ app.post('/process-time', (req, res) => {
       .replace(/\s+/g, ' ')
       .trim();
     
-    // Add Pacific Time if not already in time
     let finalTime = cleanedTime;
     if (!finalTime.toLowerCase().includes('pacific') && !finalTime.toLowerCase().includes('pt')) {
       finalTime = `${cleanedTime} Pacific Time`;
@@ -692,7 +663,7 @@ app.post('/callback-request', (req, res) => {
 });
 
 // -------------------------------------------------------
-// VOICEMAIL (HUMAN REPRESENTATIVE)
+// VOICEMAIL
 // -------------------------------------------------------
 app.post('/rep-busy', (req, res) => {
   const twiml = new VoiceResponse();
@@ -700,13 +671,11 @@ app.post('/rep-busy', (req, res) => {
   console.log("DEBUG: /rep-busy endpoint hit");
 
   twiml.say(
-    "All human representatives are currently busy. " +
-    "Please leave a message after the beep, or press 1 to return to the AI assistant. " +
-    "This call may be monitored for quality assurance.",
+    "Thank you for your patience. All representatives are currently assisting other customers. " +
+    "Please leave a message after the beep, or press 1 to return to the main menu.",
     { voice: 'alice', language: 'en-US' }
   );
 
-  // Option to go back to AI
   const gather = twiml.gather({
     numDigits: 1,
     action: '/handle-voicemail-choice',
@@ -714,7 +683,6 @@ app.post('/rep-busy', (req, res) => {
     timeout: 5
   });
   
-  // Also record
   twiml.record({
     action: '/voicemail-complete',
     maxLength: 120,
@@ -734,8 +702,8 @@ app.post('/handle-voicemail-choice', (req, res) => {
   const digit = req.body.Digits;
   
   if (digit === '1') {
-    twiml.say("Returning to AI assistant.");
-    twiml.redirect('/ai-representative');
+    twiml.say("Returning to main menu.");
+    twiml.redirect('/voice');
   } else {
     twiml.redirect('/rep-busy');
   }
@@ -769,7 +737,7 @@ app.post('/voicemail-complete', (req, res) => {
 // DEBUG ENDPOINTS
 // -------------------------------------------------------
 app.get('/health', (req, res) => {
-  res.status(200).send('✅ IVR Server with AI is running');
+  res.status(200).send('✅ IVR Server is running');
 });
 
 app.get('/debug', (req, res) => {
@@ -782,24 +750,12 @@ app.get('/debug', (req, res) => {
   });
 });
 
-// Test AI endpoint
-app.get('/test-ai', async (req, res) => {
-  const question = req.query.q || "What are your hours?";
-  const response = await handleAIQuestion(question, "+15551234567");
-  res.json({
-    question: question,
-    response: response.text,
-    action: response.action
-  });
-});
-
 // -------------------------------------------------------
 // START SERVER
 // -------------------------------------------------------
 const PORT = process.env.PORT || 1337;
 app.listen(PORT, () => {
-  console.log(`🤖 IVR with AI Representative running on port ${PORT}`);
+  console.log(`✅ IVR Server running on port ${PORT}`);
   console.log(`✅ Health check: http://localhost:${PORT}/health`);
   console.log(`✅ Debug: http://localhost:${PORT}/debug`);
-  console.log(`🤖 Test AI: http://localhost:${PORT}/test-ai?q=What are your hours?`);
 });
