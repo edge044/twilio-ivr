@@ -162,7 +162,7 @@ async function handleAIQuestion(question, phone) {
     }
     
     const completion = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview", // or "gpt-3.5-turbo" for cheaper
+      model: "gpt-3.5-turbo", // CHANGED from gpt-4-turbo-preview to gpt-3.5-turbo
       messages: [
         {
           role: "system",
@@ -238,8 +238,8 @@ app.post('/voice', (req, res) => {
   gather.say(
     "Thank you for choosing Altair Partners. This call may be monitored for quality assurance. " +
     "Press 1 to schedule or cancel an appointment. " +
-    "Press 2 to speak with our AI representative. " + // CHANGED from 3 to 2
-    "Press 3 to request a callback.", // CHANGED from 9 to 3
+    "Press 2 to speak with our AI representative. " +
+    "Press 3 to request a callback.",
     { voice: 'alice', language: 'en-US' }
   );
 
