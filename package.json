@@ -2,8 +2,9 @@
   "name": "twilio-bot",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "answer_phone.js",
   "scripts": {
+    "start": "node answer_phone.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -13,6 +14,7 @@
   "dependencies": {
     "express": "^5.2.1",
     "nodemailer": "^7.0.11",
+    "openai": "^6.10.0",
     "twilio": "^5.10.6"
   }
 }
