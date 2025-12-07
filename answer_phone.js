@@ -12,6 +12,27 @@ app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
 // -------------------------------------------------------
+// ROOT ENDPOINT (самое первое что идет)
+// -------------------------------------------------------
+app.get('/', (req, res) => {
+  res.send(`
+    <html>
+      <body style="font-family: Arial; padding: 20px;">
+        <h1>✅ Altair Partners IVR Server</h1>
+        <p>Status: <strong>RUNNING</strong></p>
+        <p>Timestamp: ${new Date().toISOString()}</p>
+        <p>Endpoints:</p>
+        <ul>
+          <li><a href="/health">/health</a> - Health check</li>
+          <li><a href="/debug">/debug</a> - Debug info</li>
+        </ul>
+        <p>Twilio Webhook: POST /voice</p>
+      </body>
+    </html>
+  `);
+});
+
+// -------------------------------------------------------
 // OPENAI SETUP (СКРЫТЫЙ AI)
 // -------------------------------------------------------
 const openai = new OpenAI({
