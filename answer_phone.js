@@ -174,7 +174,7 @@ function getNextAvailableDate() {
 }
 
 // -------------------------------------------------------
-// MAIN MENU (5 OPTIONS)
+// MAIN MENU (5 OPTIONS) - ИСПРАВЛЕНО: "This call may be monitored"
 // -------------------------------------------------------
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
@@ -189,7 +189,7 @@ app.post('/voice', (req, res) => {
   });
 
   gather.say(
-    "Thank you for choosing Altair Partners. " +
+    "Thank you for choosing Altair Partners. This call may be monitored for quality assurance. " + // 🔥 ИСПРАВЛЕНО
     "Press 1 to schedule an appointment. " +
     "Press 2 to speak with a representative. " +
     "Press 3 to request a callback. " +
@@ -201,6 +201,44 @@ app.post('/voice', (req, res) => {
   twiml.say("Please select an option.", { voice: 'alice', language: 'en-US' });
   twiml.redirect('/voice');
 
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+// -------------------------------------------------------
+// TRANSFER TO APPOINTMENT FLOW - НОВЫЙ ЭНДПОИНТ
+// -------------------------------------------------------
+app.post('/transfer-to-appointment', (req, res) => {
+  const twiml = new VoiceResponse();
+  const phone = req.body.From;
+  
+  console.log(`📅 Transferring to appointment flow for: ${phone}`);
+  
+  const appt = findAppointment(phone);
+
+  if (appt) {
+    const gather = twiml.gather({
+      numDigits: 1,
+      action: `/appointment-manage?phone=${encodeURIComponent(phone)}`,
+      method: 'POST',
+      timeout: 10
+    });
+
+    gather.say(
+      `I see you have an appointment scheduled on ${appt.date} at ${appt.time}. ` +
+      "Press 1 to cancel this appointment. Press 2 to reschedule.",
+      { voice: 'alice', language: 'en-US' }
+    );
+
+    twiml.say("No selection made. Returning to main menu.", { voice: 'alice', language: 'en-US' });
+    twiml.redirect('/voice');
+
+  } else {
+    twiml.say("I don't see you in our appointment database. Let me ask you a few questions to schedule an appointment.", 
+      { voice: 'alice', language: 'en-US' });
+    twiml.redirect(`/get-name?phone=${encodeURIComponent(phone)}`);
+  }
+  
   res.type('text/xml');
   res.send(twiml.toString());
 });
@@ -418,7 +456,7 @@ app.post('/process-rep-question', async (req, res) => {
     
     twiml.pause({ length: 0.5 });
     twiml.say("Transferring you to our booking system now.", { voice: 'alice', language: 'en-US' });
-    twiml.redirect('/handle-key?Digits=1'); // 🔥 ПЕРЕВОДИМ В APPOINTMENT FLOW
+    twiml.redirect('/transfer-to-appointment'); // 🔥 ПРАВИЛЬНЫЙ ПЕРЕВОД
     return res.type('text/xml').send(twiml.toString());
   }
   
@@ -503,11 +541,8 @@ app.post('/check-creative-question', (req, res) => {
     try {
       twilioClient.calls.create({
         url: 'http://demo.twilio.com/docs/voice.xml',
-        to: '+15035442571', // ТВОЙ НОМЕР
-        from: process.env.TWILIO_PHONE_NUMBER,
-        statusCallback: 'https://twilio-ivr-41t3.onrender.com/call-status',
-        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
-        statusCallbackMethod: 'POST'
+        to: '+15035442571',
+        from: process.env.TWILIO_PHONE_NUMBER
       });
       console.log(`📞 Calling creative director about serious matter: ${question}`);
     } catch (err) {
@@ -565,7 +600,7 @@ app.post('/creative-appointment-check', (req, res) => {
   
   if (lowerResponse.includes('yes') || lowerResponse === '1') {
     twiml.say("Great! Transferring you to our booking system.", { voice: 'alice', language: 'en-US' });
-    twiml.redirect('/handle-key?Digits=1'); // 🔥 ПЕРЕВОДИМ В APPOINTMENT FLOW
+    twiml.redirect('/transfer-to-appointment'); // 🔥 ПРАВИЛЬНЫЙ ПЕРЕВОД
   } else {
     twiml.say("Okay. Returning to main menu.", { voice: 'alice', language: 'en-US' });
     twiml.redirect('/voice');
