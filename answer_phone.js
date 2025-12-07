@@ -1,5 +1,6 @@
 const express = require('express');
 const fs = require('fs');
+const path = require('path');
 const VoiceResponse = require('twilio').twiml.VoiceResponse;
 const twilioClient = require('twilio')(
   process.env.TWILIO_ACCOUNT_SID,
@@ -21,10 +22,14 @@ app.get('/', (req, res) => {
         <h1>✅ Altair Partners IVR Server</h1>
         <p>Status: <strong>RUNNING</strong></p>
         <p>Timestamp: ${new Date().toISOString()}</p>
+        <p>Local Time: ${new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })} PST</p>
         <p>Endpoints:</p>
         <ul>
           <li><a href="/health">/health</a> - Health check</li>
           <li><a href="/debug">/debug</a> - Debug info</li>
+          <li><a href="/logs">/logs</a> - Call logs</li>
+          <li><a href="/appointments">/appointments</a> - All appointments</li>
+          <li><a href="/conversations">/conversations</a> - AI conversations</li>
         </ul>
         <p>Twilio Webhook: POST /voice</p>
       </body>
@@ -102,9 +107,89 @@ function isSeriousQuestion(question) {
 }
 
 // -------------------------------------------------------
-// JSON DATABASE
+// JSON DATABASE & LOGGING
 // -------------------------------------------------------
 const DB_PATH = "./appointments.json";
+const CALL_LOGS_PATH = "./call_logs.json";
+const AI_CONVERSATIONS_PATH = "./ai_conversations.json";
+
+// Функция для записи логов звонков
+function logCall(phone, action, details = {}) {
+  try {
+    let logs = [];
+    if (fs.existsSync(CALL_LOGS_PATH)) {
+      const data = fs.readFileSync(CALL_LOGS_PATH, "utf8");
+      logs = JSON.parse(data || '[]');
+    }
+    
+    logs.push({
+      phone,
+      action,
+      details,
+      timestamp: new Date().toISOString(),
+      time: new Date().toLocaleString('en-US', { 
+        timeZone: 'America/Los_Angeles',
+        hour12: true,
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      })
+    });
+    
+    // Сохраняем только последние 1000 записей
+    if (logs.length > 1000) {
+      logs = logs.slice(-1000);
+    }
+    
+    fs.writeFileSync(CALL_LOGS_PATH, JSON.stringify(logs, null, 2));
+    console.log(`📝 Call logged: ${phone} - ${action}`);
+    
+  } catch (error) {
+    console.error("ERROR logging call:", error);
+  }
+}
+
+// Функция для записи AI разговоров
+function logAIConversation(phone, question, response) {
+  try {
+    let conversations = [];
+    if (fs.existsSync(AI_CONVERSATIONS_PATH)) {
+      const data = fs.readFileSync(AI_CONVERSATIONS_PATH, "utf8");
+      conversations = JSON.parse(data || '[]');
+    }
+    
+    conversations.push({
+      phone,
+      question,
+      response,
+      timestamp: new Date().toISOString(),
+      time: new Date().toLocaleString('en-US', { 
+        timeZone: 'America/Los_Angeles',
+        hour12: true,
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      })
+    });
+    
+    // Сохраняем только последние 500 разговоров
+    if (conversations.length > 500) {
+      conversations = conversations.slice(-500);
+    }
+    
+    fs.writeFileSync(AI_CONVERSATIONS_PATH, JSON.stringify(conversations, null, 2));
+    console.log(`🤖 AI conversation logged: ${phone}`);
+    
+  } catch (error) {
+    console.error("ERROR logging AI conversation:", error);
+  }
+}
 
 function loadDB() {
   try {
@@ -147,20 +232,41 @@ function addAppointment(name, phone, businessType, serviceType, date, time) {
     return normalizedApptPhone !== normalizedPhone;
   });
   
-  filteredDB.push({ 
+  const appointment = { 
     name, 
     phone,
     businessType,
     serviceType,
     date, 
     time,
-    created: new Date().toISOString()
-  });
+    created: new Date().toISOString(),
+    timestamp: new Date().toLocaleString('en-US', { 
+      timeZone: 'America/Los_Angeles',
+      hour12: true,
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    })
+  };
+  
+  filteredDB.push(appointment);
   
   saveDB(filteredDB);
   console.log(`✅ Appointment added: ${name} - ${date} at ${time}`);
   
-  return filteredDB.find(a => a.phone === phone);
+  // Логируем звонок
+  logCall(phone, 'APPOINTMENT_SCHEDULED', {
+    name,
+    businessType,
+    serviceType,
+    date,
+    time
+  });
+  
+  return appointment;
 }
 
 // Calculate next available date (3 days from today)
@@ -174,12 +280,19 @@ function getNextAvailableDate() {
 }
 
 // -------------------------------------------------------
-// MAIN MENU (5 OPTIONS) - ИСПРАВЛЕНО: "This call may be monitored"
+// MAIN MENU (5 OPTIONS)
 // -------------------------------------------------------
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
+  const phone = req.body.From;
   
-  console.log("📞 Main menu - Caller:", req.body.From);
+  console.log("📞 Main menu - Caller:", phone);
+  
+  // Логируем входящий звонок
+  logCall(phone, 'CALL_RECEIVED', {
+    caller: phone,
+    time: new Date().toLocaleTimeString()
+  });
   
   const gather = twiml.gather({
     numDigits: 1,
@@ -189,7 +302,7 @@ app.post('/voice', (req, res) => {
   });
 
   gather.say(
-    "Thank you for choosing Altair Partners. This call may be monitored for quality assurance. " + // 🔥 ИСПРАВЛЕНО
+    "Thank you for choosing Altair Partners. This call may be monitored for quality assurance. " +
     "Press 1 to schedule an appointment. " +
     "Press 2 to speak with a representative. " +
     "Press 3 to request a callback. " +
@@ -206,13 +319,16 @@ app.post('/voice', (req, res) => {
 });
 
 // -------------------------------------------------------
-// TRANSFER TO APPOINTMENT FLOW - НОВЫЙ ЭНДПОИНТ
+// TRANSFER TO APPOINTMENT FLOW
 // -------------------------------------------------------
 app.post('/transfer-to-appointment', (req, res) => {
   const twiml = new VoiceResponse();
   const phone = req.body.From;
   
   console.log(`📅 Transferring to appointment flow for: ${phone}`);
+  
+  // Логируем переход
+  logCall(phone, 'APPOINTMENT_FLOW_STARTED');
   
   const appt = findAppointment(phone);
 
@@ -252,6 +368,9 @@ app.post('/handle-key', (req, res) => {
   const phone = req.body.From;
 
   console.log(`🔘 Menu option ${digit} - Phone: ${phone}`);
+  
+  // Логируем выбор меню
+  logCall(phone, `MENU_OPTION_${digit}`);
 
   if (!digit) {
     twiml.say("Invalid input. Please try again.", { voice: 'alice', language: 'en-US' });
@@ -321,8 +440,12 @@ app.post('/handle-key', (req, res) => {
 // -------------------------------------------------------
 app.post('/connect-representative', (req, res) => {
   const twiml = new VoiceResponse();
+  const phone = req.body.From;
   
   console.log("👤 Representative - asking for reason");
+  
+  // Логируем
+  logCall(phone, 'REPRESENTATIVE_SELECTED');
 
   const gather = twiml.gather({
     input: 'speech',
@@ -443,6 +566,10 @@ app.post('/process-rep-question', async (req, res) => {
   
   // БЫСТРЫЙ AI ответ
   const aiResponse = await getRepResponse(question, phone);
+  
+  // Логируем AI разговор
+  logAIConversation(phone, question, aiResponse);
+  
   twiml.say(aiResponse, { voice: 'alice', language: 'en-US' });
   
   const lowerQuestion = question.toLowerCase();
@@ -456,7 +583,7 @@ app.post('/process-rep-question', async (req, res) => {
     
     twiml.pause({ length: 0.5 });
     twiml.say("Transferring you to our booking system now.", { voice: 'alice', language: 'en-US' });
-    twiml.redirect('/transfer-to-appointment'); // 🔥 ПРАВИЛЬНЫЙ ПЕРЕВОД
+    twiml.redirect('/transfer-to-appointment');
     return res.type('text/xml').send(twiml.toString());
   }
   
@@ -495,8 +622,12 @@ app.post('/process-rep-question', async (req, res) => {
 // -------------------------------------------------------
 app.post('/creative-director', (req, res) => {
   const twiml = new VoiceResponse();
+  const phone = req.body.From;
   
   console.log("🎨 Creative Director - asking for details");
+  
+  // Логируем
+  logCall(phone, 'CREATIVE_DIRECTOR_SELECTED');
 
   const gather = twiml.gather({
     input: 'speech',
@@ -536,6 +667,12 @@ app.post('/check-creative-question', (req, res) => {
   // Проверка серьезных вопросов
   if (isSeriousQuestion(question)) {
     console.log(`🚨 SERIOUS QUESTION detected: ${question}`);
+    
+    // Логируем серьезный вопрос
+    logCall(phone, 'SERIOUS_QUESTION_DETECTED', {
+      question,
+      category: 'legal/money'
+    });
     
     // ЗВОНИМ НА ТВОЙ НОМЕР (не говорим клиенту)
     try {
@@ -600,7 +737,7 @@ app.post('/creative-appointment-check', (req, res) => {
   
   if (lowerResponse.includes('yes') || lowerResponse === '1') {
     twiml.say("Great! Transferring you to our booking system.", { voice: 'alice', language: 'en-US' });
-    twiml.redirect('/transfer-to-appointment'); // 🔥 ПРАВИЛЬНЫЙ ПЕРЕВОД
+    twiml.redirect('/transfer-to-appointment');
   } else {
     twiml.say("Okay. Returning to main menu.", { voice: 'alice', language: 'en-US' });
     twiml.redirect('/voice');
@@ -618,6 +755,9 @@ app.post('/get-name', (req, res) => {
   const phone = req.query.phone || req.body.From;
   
   console.log(`📝 Getting name for: ${phone}`);
+  
+  // Логируем начало appointment flow
+  logCall(phone, 'APPOINTMENT_FLOW_STARTED');
 
   const gather = twiml.gather({
     input: 'speech',
@@ -939,6 +1079,9 @@ app.post('/callback-request', (req, res) => {
   const phone = req.body.From;
   
   console.log(`📞 Callback request from: ${phone}`);
+  
+  // Логируем callback request
+  logCall(phone, 'CALLBACK_REQUESTED');
 
   twiml.say(
     "Your callback request has been submitted. We'll call you back as soon as possible. " +
@@ -963,8 +1106,12 @@ app.post('/callback-request', (req, res) => {
 // -------------------------------------------------------
 app.post('/partnership', (req, res) => {
   const twiml = new VoiceResponse();
+  const phone = req.body.From;
   
   console.log("🤝 Partnership inquiry");
+  
+  // Логируем partnership inquiry
+  logCall(phone, 'PARTNERSHIP_INQUIRY');
 
   twiml.say(
     "Thank you for your interest in partnership opportunities. " +
@@ -987,6 +1134,9 @@ app.post('/appointment-manage', (req, res) => {
   const phone = req.query.phone;
 
   console.log(`❌ Managing appointment for: ${phone}`);
+  
+  // Логируем управление appointment
+  logCall(phone, `APPOINTMENT_MANAGE_${digit}`);
 
   if (!digit) {
     twiml.say("No selection made. Returning to main menu.", { voice: 'alice', language: 'en-US' });
@@ -1051,13 +1201,88 @@ app.get('/health', (req, res) => {
 app.get('/debug', (req, res) => {
   const appointments = loadDB();
   
+  // Загружаем логи
+  let callLogs = [];
+  let aiConversations = [];
+  
+  try {
+    if (fs.existsSync(CALL_LOGS_PATH)) {
+      const logsData = fs.readFileSync(CALL_LOGS_PATH, "utf8");
+      callLogs = JSON.parse(logsData || '[]');
+    }
+    
+    if (fs.existsSync(AI_CONVERSATIONS_PATH)) {
+      const convData = fs.readFileSync(AI_CONVERSATIONS_PATH, "utf8");
+      aiConversations = JSON.parse(convData || '[]');
+    }
+  } catch (error) {
+    console.error("ERROR loading logs:", error);
+  }
+  
   res.json({
     status: 'running',
-    appointments: appointments,
-    totalAppointments: appointments.length,
-    nextAvailableDate: getNextAvailableDate(),
-    timestamp: new Date().toISOString()
+    serverTime: new Date().toISOString(),
+    localTime: new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }),
+    appointments: {
+      total: appointments.length,
+      recent: appointments.slice(-10)
+    },
+    callLogs: {
+      total: callLogs.length,
+      recent: callLogs.slice(-20)
+    },
+    aiConversations: {
+      total: aiConversations.length,
+      recent: aiConversations.slice(-10)
+    },
+    nextAvailableDate: getNextAvailableDate()
   });
+});
+
+app.get('/logs', (req, res) => {
+  try {
+    let callLogs = [];
+    if (fs.existsSync(CALL_LOGS_PATH)) {
+      const logsData = fs.readFileSync(CALL_LOGS_PATH, "utf8");
+      callLogs = JSON.parse(logsData || '[]');
+    }
+    
+    res.json({
+      total: callLogs.length,
+      logs: callLogs.reverse(), // Новые сверху
+      lastUpdated: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load logs" });
+  }
+});
+
+app.get('/appointments', (req, res) => {
+  const appointments = loadDB();
+  
+  res.json({
+    total: appointments.length,
+    appointments: appointments.reverse(), // Новые сверху
+    lastUpdated: new Date().toISOString()
+  });
+});
+
+app.get('/conversations', (req, res) => {
+  try {
+    let aiConversations = [];
+    if (fs.existsSync(AI_CONVERSATIONS_PATH)) {
+      const convData = fs.readFileSync(AI_CONVERSATIONS_PATH, "utf8");
+      aiConversations = JSON.parse(convData || '[]');
+    }
+    
+    res.json({
+      total: aiConversations.length,
+      conversations: aiConversations.reverse(), // Новые сверху
+      lastUpdated: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load conversations" });
+  }
 });
 
 // -------------------------------------------------------
@@ -1068,6 +1293,10 @@ app.listen(PORT, () => {
   console.log(`✅ IVR Server running on port ${PORT}`);
   console.log(`✅ Health check: http://localhost:${PORT}/health`);
   console.log(`✅ Debug: http://localhost:${PORT}/debug`);
+  console.log(`📊 Logs: http://localhost:${PORT}/logs`);
+  console.log(`📅 Appointments: http://localhost:${PORT}/appointments`);
+  console.log(`🤖 Conversations: http://localhost:${PORT}/conversations`);
   console.log(`✅ Next available date: ${getNextAvailableDate()}`);
   console.log(`🤖 AI Representative is ready (fast mode)`);
+  console.log(`📝 Logging enabled: call_logs.json, ai_conversations.json`);
 });
