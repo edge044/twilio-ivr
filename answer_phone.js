@@ -174,7 +174,7 @@ function getNextAvailableDate() {
 }
 
 // -------------------------------------------------------
-// MAIN MENU (7 OPTIONS)
+// MAIN MENU (5 OPTIONS)
 // -------------------------------------------------------
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
@@ -375,7 +375,7 @@ app.post('/start-rings', (req, res) => {
     input: 'speech',
     action: '/process-rep-question',
     method: 'POST',
-    speechTimeout: 2, // КОРОТКИЙ таймаут
+    speechTimeout: 2,
     timeout: 8,
     speechModel: 'phone_call',
     enhanced: true
@@ -409,15 +409,16 @@ app.post('/process-rep-question', async (req, res) => {
   
   const lowerQuestion = question.toLowerCase();
   
-  // Если вопрос про appointments → ПЕРЕВОДИМ
+  // 🔥 ИСПРАВЛЕНИЕ: Если вопрос про appointments → ПЕРЕВОДИМ В APPOINTMENT FLOW
   if (lowerQuestion.includes('appointment') || 
       lowerQuestion.includes('book') || 
       lowerQuestion.includes('schedule') ||
-      lowerQuestion.includes('meeting')) {
+      lowerQuestion.includes('meeting') ||
+      lowerQuestion.includes('appoint')) {
     
     twiml.pause({ length: 0.5 });
     twiml.say("Transferring you to our booking system now.", { voice: 'alice', language: 'en-US' });
-    twiml.redirect('/voice');
+    twiml.redirect('/handle-key?Digits=1'); // 🔥 ПЕРЕВОДИМ В APPOINTMENT FLOW
     return res.type('text/xml').send(twiml.toString());
   }
   
@@ -564,7 +565,7 @@ app.post('/creative-appointment-check', (req, res) => {
   
   if (lowerResponse.includes('yes') || lowerResponse === '1') {
     twiml.say("Great! Transferring you to our booking system.", { voice: 'alice', language: 'en-US' });
-    twiml.redirect('/voice');
+    twiml.redirect('/handle-key?Digits=1'); // 🔥 ПЕРЕВОДИМ В APPOINTMENT FLOW
   } else {
     twiml.say("Okay. Returning to main menu.", { voice: 'alice', language: 'en-US' });
     twiml.redirect('/voice');
@@ -575,11 +576,8 @@ app.post('/creative-appointment-check', (req, res) => {
 });
 
 // -------------------------------------------------------
-// APPOINTMENT FLOW (остальной код остается таким же)
+// APPOINTMENT FLOW
 // -------------------------------------------------------
-// ... (весь код appointment flow как был, начиная с app.post('/get-name') ...
-// ПРОДОЛЖАЕМ С ТОГО ЖЕ МЕСТА:
-
 app.post('/get-name', (req, res) => {
   const twiml = new VoiceResponse();
   const phone = req.query.phone || req.body.From;
