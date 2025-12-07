@@ -7,6 +7,7 @@ const twilioClient = require('twilio')(
   process.env.TWILIO_AUTH_TOKEN
 );
 const { OpenAI } = require('openai');
+const { startReminderScheduler } = require('./reminders');
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -30,8 +31,10 @@ app.get('/', (req, res) => {
           <li><a href="/logs">/logs</a> - Call logs</li>
           <li><a href="/appointments">/appointments</a> - All appointments</li>
           <li><a href="/conversations">/conversations</a> - AI conversations</li>
+          <li><a href="/reminders">/reminders</a> - Reminder logs</li>
         </ul>
         <p>Twilio Webhook: POST /voice</p>
+        <p>⏰ Reminder System: Calls 2 minutes after appointment scheduling</p>
       </body>
     </html>
   `);
@@ -112,6 +115,7 @@ function isSeriousQuestion(question) {
 const DB_PATH = "./appointments.json";
 const CALL_LOGS_PATH = "./call_logs.json";
 const AI_CONVERSATIONS_PATH = "./ai_conversations.json";
+const REMINDERS_LOG = "./reminders_log.json";
 
 // Функция для записи логов звонков
 function logCall(phone, action, details = {}) {
@@ -1204,6 +1208,7 @@ app.get('/debug', (req, res) => {
   // Загружаем логи
   let callLogs = [];
   let aiConversations = [];
+  let reminderLogs = [];
   
   try {
     if (fs.existsSync(CALL_LOGS_PATH)) {
@@ -1214,6 +1219,11 @@ app.get('/debug', (req, res) => {
     if (fs.existsSync(AI_CONVERSATIONS_PATH)) {
       const convData = fs.readFileSync(AI_CONVERSATIONS_PATH, "utf8");
       aiConversations = JSON.parse(convData || '[]');
+    }
+    
+    if (fs.existsSync(REMINDERS_LOG)) {
+      const remData = fs.readFileSync(REMINDERS_LOG, "utf8");
+      reminderLogs = JSON.parse(remData || '[]');
     }
   } catch (error) {
     console.error("ERROR loading logs:", error);
@@ -1234,6 +1244,10 @@ app.get('/debug', (req, res) => {
     aiConversations: {
       total: aiConversations.length,
       recent: aiConversations.slice(-10)
+    },
+    reminderLogs: {
+      total: reminderLogs.length,
+      recent: reminderLogs.slice(-10)
     },
     nextAvailableDate: getNextAvailableDate()
   });
@@ -1285,8 +1299,26 @@ app.get('/conversations', (req, res) => {
   }
 });
 
+app.get('/reminders', (req, res) => {
+  try {
+    let reminderLogs = [];
+    if (fs.existsSync(REMINDERS_LOG)) {
+      const remData = fs.readFileSync(REMINDERS_LOG, "utf8");
+      reminderLogs = JSON.parse(remData || '[]');
+    }
+    
+    res.json({
+      total: reminderLogs.length,
+      reminders: reminderLogs.reverse(), // Новые сверху
+      lastUpdated: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load reminders" });
+  }
+});
+
 // -------------------------------------------------------
-// START SERVER
+// START SERVER WITH REMINDER SYSTEM
 // -------------------------------------------------------
 const PORT = process.env.PORT || 1337;
 app.listen(PORT, () => {
@@ -1296,7 +1328,12 @@ app.listen(PORT, () => {
   console.log(`📊 Logs: http://localhost:${PORT}/logs`);
   console.log(`📅 Appointments: http://localhost:${PORT}/appointments`);
   console.log(`🤖 Conversations: http://localhost:${PORT}/conversations`);
+  console.log(`⏰ Reminders: http://localhost:${PORT}/reminders`);
   console.log(`✅ Next available date: ${getNextAvailableDate()}`);
   console.log(`🤖 AI Representative is ready (fast mode)`);
-  console.log(`📝 Logging enabled: call_logs.json, ai_conversations.json`);
+  console.log(`📝 Logging enabled: call_logs.json, ai_conversations.json, reminders_log.json`);
+  console.log(`⏰ Reminder system: Calls 2 minutes after appointment scheduling`);
+  
+  // Запускаем reminder scheduler
+  startReminderScheduler();
 });
