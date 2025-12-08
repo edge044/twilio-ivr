@@ -7,7 +7,7 @@ const twilioClient = require('twilio')(
   process.env.TWILIO_AUTH_TOKEN
 );
 const { OpenAI } = require('openai');
-const { startReminderScheduler } = require('./reminders');
+const { startReminderScheduler, triggerTestReminder } = require('./reminders');
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -34,7 +34,8 @@ app.get('/', (req, res) => {
           <li><a href="/reminders">/reminders</a> - Reminder logs</li>
         </ul>
         <p>Twilio Webhook: POST /voice</p>
-        <p>⏰ Reminder System: Calls 2 minutes after appointment scheduling</p>
+        <p>⏰ Reminder System: Calls ONE DAY BEFORE appointment at 2 PM Pacific Time</p>
+        <p>🔄 Next check: Every 5 minutes</p>
       </body>
     </html>
   `);
@@ -1053,7 +1054,8 @@ app.post('/schedule-time', (req, res) => {
               `Phone: ${phone}\n` +
               `Date: ${date} at ${cleanedTime}\n` +
               `Business: ${businessType}\n` +
-              `Service: ${serviceType}`,
+              `Service: ${serviceType}\n` +
+              `⏰ Reminder: Will call ONE DAY BEFORE at 2 PM Pacific Time`,
         from: process.env.TWILIO_PHONE_NUMBER,
         to: process.env.MY_PERSONAL_NUMBER
       });
@@ -1066,7 +1068,8 @@ app.post('/schedule-time', (req, res) => {
   twiml.say(
     `Excellent! Your appointment has been scheduled for ${date} at ${cleanedTime}. ` +
     "You will receive an SMS shortly. Please check your messages and reply with your email address " +
-    "for further communication with our creative director. Thank you for choosing Altair Partners!",
+    "for further communication with our creative director. We will also call you ONE DAY BEFORE " +
+    "your appointment at 2 PM Pacific Time as a reminder. Thank you for choosing Altair Partners!",
     { voice: 'alice', language: 'en-US' }
   );
   twiml.hangup();
@@ -1196,6 +1199,27 @@ app.post('/appointment-manage', (req, res) => {
 });
 
 // -------------------------------------------------------
+// TEST REMINDER ENDPOINT (для тестирования)
+// -------------------------------------------------------
+app.post('/test-reminder', (req, res) => {
+  const phone = req.body.phone || req.query.phone;
+  
+  if (!phone) {
+    return res.status(400).json({ error: "Phone number required" });
+  }
+  
+  console.log(`🔔 Manual test trigger for phone: ${phone}`);
+  
+  triggerTestReminder(phone);
+  
+  res.json({ 
+    status: 'test_triggered', 
+    phone, 
+    message: 'Test reminder call initiated' 
+  });
+});
+
+// -------------------------------------------------------
 // DEBUG ENDPOINTS
 // -------------------------------------------------------
 app.get('/health', (req, res) => {
@@ -1249,7 +1273,12 @@ app.get('/debug', (req, res) => {
       total: reminderLogs.length,
       recent: reminderLogs.slice(-10)
     },
-    nextAvailableDate: getNextAvailableDate()
+    nextAvailableDate: getNextAvailableDate(),
+    reminderSystem: {
+      schedule: 'ONE DAY BEFORE appointment at 2 PM Pacific Time',
+      checkInterval: 'Every 5 minutes',
+      testEndpoint: 'POST /test-reminder?phone=+1234567890'
+    }
   });
 });
 
@@ -1310,7 +1339,8 @@ app.get('/reminders', (req, res) => {
     res.json({
       total: reminderLogs.length,
       reminders: reminderLogs.reverse(), // Новые сверху
-      lastUpdated: new Date().toISOString()
+      lastUpdated: new Date().toISOString(),
+      systemInfo: 'Calls ONE DAY BEFORE appointment at 2 PM Pacific Time'
     });
   } catch (error) {
     res.status(500).json({ error: "Failed to load reminders" });
@@ -1332,7 +1362,9 @@ app.listen(PORT, () => {
   console.log(`✅ Next available date: ${getNextAvailableDate()}`);
   console.log(`🤖 AI Representative is ready (fast mode)`);
   console.log(`📝 Logging enabled: call_logs.json, ai_conversations.json, reminders_log.json`);
-  console.log(`⏰ Reminder system: Calls 2 minutes after appointment scheduling`);
+  console.log(`⏰ Reminder system: Calls ONE DAY BEFORE appointment at 2 PM Pacific Time`);
+  console.log(`🔄 Check interval: Every 5 minutes`);
+  console.log(`🔔 Test endpoint: POST http://localhost:${PORT}/test-reminder?phone=+1234567890`);
   
   // Запускаем reminder scheduler
   startReminderScheduler();
