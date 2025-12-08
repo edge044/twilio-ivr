@@ -8,6 +8,7 @@ const twilioClient = require('twilio')(
 );
 const { OpenAI } = require('openai');
 const { startReminderScheduler, triggerTestReminder } = require('./reminders');
+const { isWithinBusinessHours, getTimeUntilOpen, getBusinessStatus } = require('./checkBusinessHours');
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -17,13 +18,17 @@ app.use(express.json());
 // ROOT ENDPOINT
 // -------------------------------------------------------
 app.get('/', (req, res) => {
+  const businessStatus = getBusinessStatus();
+  
   res.send(`
     <html>
       <body style="font-family: Arial; padding: 20px;">
         <h1>✅ Altair Partners IVR Server</h1>
-        <p>Status: <strong>RUNNING</strong></p>
-        <p>Timestamp: ${new Date().toISOString()}</p>
-        <p>Local Time: ${new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })} PST</p>
+        <p>Status: <strong>${businessStatus.isOpen ? 'OPEN' : 'CLOSED'}</strong></p>
+        <p>Current Time (PST): ${businessStatus.currentTime}</p>
+        <p>Business Hours: ${businessStatus.hours}</p>
+        <p>Location: ${businessStatus.location}</p>
+        <p>${businessStatus.isOpen ? '✅ Currently open' : '⏰ ' + businessStatus.nextOpenTime}</p>
         <p>Endpoints:</p>
         <ul>
           <li><a href="/health">/health</a> - Health check</li>
@@ -32,6 +37,7 @@ app.get('/', (req, res) => {
           <li><a href="/appointments">/appointments</a> - All appointments</li>
           <li><a href="/conversations">/conversations</a> - AI conversations</li>
           <li><a href="/reminders">/reminders</a> - Reminder logs</li>
+          <li><a href="/business-status">/business-status</a> - Business hours check</li>
         </ul>
         <p>Twilio Webhook: POST /voice</p>
         <p>⏰ Reminder System: Calls ONE DAY BEFORE appointment at 2 PM Pacific Time</p>
@@ -413,7 +419,30 @@ app.post('/handle-key', (req, res) => {
 
   else if (digit === '2') {
     console.log("👤 Option 2 - Representative");
-    twiml.redirect('/connect-representative');
+    
+    // Проверяем рабочее время
+    if (isWithinBusinessHours()) {
+      twiml.redirect('/connect-representative');
+    } else {
+      // ЗАКРЫТО - предлагаем опции
+      const nextOpenTime = getTimeUntilOpen();
+      const gather = twiml.gather({
+        numDigits: 1,
+        action: '/closed-hours-options',
+        method: 'POST',
+        timeout: 10
+      });
+
+      gather.say(
+        `I'm sorry, but we are currently closed. ${nextOpenTime}. ` +
+        "To request a callback, press 1. To leave a voice message, press 2. " +
+        "To return to the main menu, press 9.",
+        { voice: 'alice', language: 'en-US' }
+      );
+
+      twiml.say("No selection made. Goodbye.", { voice: 'alice', language: 'en-US' });
+      twiml.hangup();
+    }
   }
 
   else if (digit === '3') {
@@ -428,7 +457,30 @@ app.post('/handle-key', (req, res) => {
 
   else if (digit === '7') {
     console.log("🎨 Option 7 - Creative Director");
-    twiml.redirect('/creative-director');
+    
+    // Проверяем рабочее время
+    if (isWithinBusinessHours()) {
+      twiml.redirect('/creative-director');
+    } else {
+      // ЗАКРЫТО - предлагаем опции
+      const nextOpenTime = getTimeUntilOpen();
+      const gather = twiml.gather({
+        numDigits: 1,
+        action: '/closed-hours-options',
+        method: 'POST',
+        timeout: 10
+      });
+
+      gather.say(
+        `I'm sorry, but we are currently closed. ${nextOpenTime}. ` +
+        "To request a callback, press 1. To leave a voice message, press 2. " +
+        "To return to the main menu, press 9.",
+        { voice: 'alice', language: 'en-US' }
+      );
+
+      twiml.say("No selection made. Goodbye.", { voice: 'alice', language: 'en-US' });
+      twiml.hangup();
+    }
   }
 
   else {
@@ -441,6 +493,129 @@ app.post('/handle-key', (req, res) => {
 });
 
 // -------------------------------------------------------
+// CLOSED HOURS OPTIONS
+// -------------------------------------------------------
+app.post('/closed-hours-options', (req, res) => {
+  const twiml = new VoiceResponse();
+  const digit = req.body.Digits;
+  const phone = req.body.From;
+
+  console.log(`🔘 Closed hours option ${digit} - Phone: ${phone}`);
+  
+  logCall(phone, `CLOSED_HOURS_OPTION_${digit}`);
+
+  if (!digit) {
+    twiml.say("No selection made. Goodbye.", { voice: 'alice', language: 'en-US' });
+    twiml.hangup();
+    return res.type('text/xml').send(twiml.toString());
+  }
+
+  if (digit === '1') {
+    // Callback request when closed
+    console.log("📞 Callback request during closed hours");
+    
+    twiml.say(
+      "Your callback request has been submitted. We'll call you back during our next business hours. " +
+      "Thank you for calling Altair Partners. Goodbye.",
+      { voice: 'alice', language: 'en-US' }
+    );
+    
+    // Отправляем SMS админу
+    try {
+      twilioClient.messages.create({
+        body: `📞 AFTER-HOURS Callback requested from ${phone} (Closed hours)`,
+        from: process.env.TWILIO_PHONE_NUMBER,
+        to: process.env.MY_PERSONAL_NUMBER
+      });
+      console.log(`📱 After-hours callback notification sent to admin`);
+    } catch (err) {
+      console.log("ERROR sending admin notification:", err);
+    }
+    
+    logCall(phone, 'AFTER_HOURS_CALLBACK_REQUESTED');
+    twiml.hangup();
+  }
+
+  else if (digit === '2') {
+    // Voice message when closed
+    console.log("🎤 Voice message during closed hours");
+    
+    const gather = twiml.gather({
+      input: 'speech',
+      action: '/record-voice-message',
+      method: 'POST',
+      speechTimeout: 10,
+      timeout: 30,
+      speechModel: 'phone_call',
+      enhanced: true
+    });
+    
+    gather.say(
+      "Please leave your voice message after the beep. When you are finished, simply hang up or press the pound key.",
+      { voice: 'alice', language: 'en-US' }
+    );
+    
+    twiml.say("I didn't hear your message. Let's try again.", { voice: 'alice', language: 'en-US' });
+    twiml.redirect('/closed-hours-options');
+  }
+
+  else if (digit === '9') {
+    twiml.say("Returning to main menu.", { voice: 'alice', language: 'en-US' });
+    twiml.redirect('/voice');
+  }
+
+  else {
+    twiml.say("Invalid option. Goodbye.", { voice: 'alice', language: 'en-US' });
+    twiml.hangup();
+  }
+
+  res.type('text/xml');
+  res.send(twiml.toString());
+});
+
+// Запись голосового сообщения
+app.post('/record-voice-message', (req, res) => {
+  const twiml = new VoiceResponse();
+  const message = req.body.SpeechResult || '';
+  const phone = req.body.From;
+
+  console.log(`🎤 Voice message recorded from: ${phone}`);
+  console.log(`📝 Message: ${message.substring(0, 100)}...`);
+  
+  if (message && message.trim() !== '') {
+    // Отправляем SMS админу с сообщением
+    try {
+      twilioClient.messages.create({
+        body: `🎤 AFTER-HOURS VOICE MESSAGE from ${phone}:\n\n"${message.substring(0, 300)}"`,
+        from: process.env.TWILIO_PHONE_NUMBER,
+        to: process.env.MY_PERSONAL_NUMBER
+      });
+      console.log(`📱 Voice message notification sent to admin`);
+    } catch (err) {
+      console.log("ERROR sending voice message notification:", err);
+    }
+    
+    logCall(phone, 'VOICE_MESSAGE_RECORDED', {
+      messageLength: message.length,
+      preview: message.substring(0, 100)
+    });
+    
+    twiml.say(
+      "Thank you for your message. We will get back to you during our next business hours. Goodbye.",
+      { voice: 'alice', language: 'en-US' }
+    );
+  } else {
+    twiml.say(
+      "I didn't hear your message. Please try again or call back during business hours. Goodbye.",
+      { voice: 'alice', language: 'en-US' }
+    );
+  }
+  
+  twiml.hangup();
+  res.type('text/xml').send(twiml.toString());
+});
+
+// -------------------------------------------------------
 // REPRESENTATIVE (Option 2) - БЫСТРЫЙ AI
 // -------------------------------------------------------
 app.post('/connect-representative', (req, res) => {
@@ -448,6 +623,18 @@ app.post('/connect-representative', (req, res) => {
   const phone = req.body.From;
   
   console.log("👤 Representative - asking for reason");
+  
+  // Проверяем еще раз (на всякий случай)
+  if (!isWithinBusinessHours()) {
+    const nextOpenTime = getTimeUntilOpen();
+    twiml.say(
+      `I'm sorry, but we are currently closed. ${nextOpenTime}. ` +
+      "Please call back during business hours. Goodbye.",
+      { voice: 'alice', language: 'en-US' }
+    );
+    twiml.hangup();
+    return res.type('text/xml').send(twiml.toString());
+  }
   
   // Логируем
   logCall(phone, 'REPRESENTATIVE_SELECTED');
@@ -630,6 +817,18 @@ app.post('/creative-director', (req, res) => {
   const phone = req.body.From;
   
   console.log("🎨 Creative Director - asking for details");
+  
+  // Проверяем еще раз (на всякий случай)
+  if (!isWithinBusinessHours()) {
+    const nextOpenTime = getTimeUntilOpen();
+    twiml.say(
+      `I'm sorry, but we are currently closed. ${nextOpenTime}. ` +
+      "Please call back during business hours. Goodbye.",
+      { voice: 'alice', language: 'en-US' }
+    );
+    twiml.hangup();
+    return res.type('text/xml').send(twiml.toString());
+  }
   
   // Логируем
   logCall(phone, 'CREATIVE_DIRECTOR_SELECTED');
@@ -1220,6 +1419,24 @@ app.post('/test-reminder', (req, res) => {
 });
 
 // -------------------------------------------------------
+// BUSINESS HOURS ENDPOINT
+// -------------------------------------------------------
+app.get('/business-status', (req, res) => {
+  const businessStatus = getBusinessStatus();
+  
+  res.json({
+    isOpen: businessStatus.isOpen,
+    currentTime: businessStatus.currentTime,
+    nextOpenTime: businessStatus.nextOpenTime,
+    businessHours: businessStatus.hours,
+    location: businessStatus.location,
+    message: businessStatus.isOpen ? 
+      "We are currently open!" : 
+      `We are currently closed. ${businessStatus.nextOpenTime}`
+  });
+});
+
+// -------------------------------------------------------
 // DEBUG ENDPOINTS
 // -------------------------------------------------------
 app.get('/health', (req, res) => {
@@ -1228,6 +1445,7 @@ app.get('/health', (req, res) => {
 
 app.get('/debug', (req, res) => {
   const appointments = loadDB();
+  const businessStatus = getBusinessStatus();
   
   // Загружаем логи
   let callLogs = [];
@@ -1255,8 +1473,7 @@ app.get('/debug', (req, res) => {
   
   res.json({
     status: 'running',
-    serverTime: new Date().toISOString(),
-    localTime: new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }),
+    businessStatus,
     appointments: {
       total: appointments.length,
       recent: appointments.slice(-10)
@@ -1278,6 +1495,10 @@ app.get('/debug', (req, res) => {
       schedule: 'ONE DAY BEFORE appointment at 2 PM Pacific Time',
       checkInterval: 'Every 5 minutes',
       testEndpoint: 'POST /test-reminder?phone=+1234567890'
+    },
+    businessHours: {
+      open: businessStatus.isOpen,
+      message: businessStatus.isOpen ? 'Open now' : `Closed - ${businessStatus.nextOpenTime}`
     }
   });
 });
@@ -1352,19 +1573,26 @@ app.get('/reminders', (req, res) => {
 // -------------------------------------------------------
 const PORT = process.env.PORT || 1337;
 app.listen(PORT, () => {
+  const businessStatus = getBusinessStatus();
+  
   console.log(`✅ IVR Server running on port ${PORT}`);
+  console.log(`⏰ Business Status: ${businessStatus.isOpen ? 'OPEN' : 'CLOSED'}`);
+  console.log(`🕐 Current Time (PST): ${businessStatus.currentTime}`);
+  console.log(`📅 Next Open: ${businessStatus.nextOpenTime}`);
   console.log(`✅ Health check: http://localhost:${PORT}/health`);
   console.log(`✅ Debug: http://localhost:${PORT}/debug`);
   console.log(`📊 Logs: http://localhost:${PORT}/logs`);
   console.log(`📅 Appointments: http://localhost:${PORT}/appointments`);
   console.log(`🤖 Conversations: http://localhost:${PORT}/conversations`);
   console.log(`⏰ Reminders: http://localhost:${PORT}/reminders`);
+  console.log(`🏢 Business Status: http://localhost:${PORT}/business-status`);
   console.log(`✅ Next available date: ${getNextAvailableDate()}`);
   console.log(`🤖 AI Representative is ready (fast mode)`);
   console.log(`📝 Logging enabled: call_logs.json, ai_conversations.json, reminders_log.json`);
   console.log(`⏰ Reminder system: Calls ONE DAY BEFORE appointment at 2 PM Pacific Time`);
   console.log(`🔄 Check interval: Every 5 minutes`);
   console.log(`🔔 Test endpoint: POST http://localhost:${PORT}/test-reminder?phone=+1234567890`);
+  console.log(`🚪 After-hours options: Callback request (1) or Voice message (2)`);
   
   // Запускаем reminder scheduler
   startReminderScheduler();
