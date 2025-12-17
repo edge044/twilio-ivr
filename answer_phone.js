@@ -9,6 +9,7 @@ const twilioClient = require('twilio')(
 const { OpenAI } = require('openai');
 const { startReminderScheduler, triggerTestReminder } = require('./reminders');
 const { isWithinBusinessHours, getTimeUntilOpen, getBusinessStatus } = require('./checkBusinessHours');
+const { logDailyCall, getTodayStats, getAllLogDates, getLogForDate, getStatsForPeriod } = require('./dailyCallLogger');
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -19,6 +20,7 @@ app.use(express.json());
 // -------------------------------------------------------
 app.get('/', (req, res) => {
   const businessStatus = getBusinessStatus();
+  const todayStats = getTodayStats();
   
   res.send(`
     <html>
@@ -29,19 +31,29 @@ app.get('/', (req, res) => {
         <p>Business Hours: ${businessStatus.hours}</p>
         <p>Location: ${businessStatus.location}</p>
         <p>${businessStatus.isOpen ? '✅ Currently open' : '⏰ ' + businessStatus.nextOpenTime}</p>
+        
+        <h3>📊 Today's Statistics (${todayStats.date})</h3>
+        <p>Total Calls: <strong>${todayStats.totalCalls}</strong></p>
+        <p>Appointments Made: <strong>${todayStats.appointmentsMade}</strong></p>
+        <p>Callback Requests: <strong>${todayStats.callbackRequests}</strong></p>
+        <p>Representative Calls: <strong>${todayStats.representativeCalls}</strong></p>
+        <p>Creative Director Calls: <strong>${todayStats.creativeDirectorCalls}</strong></p>
+        
         <p>Endpoints:</p>
         <ul>
           <li><a href="/health">/health</a> - Health check</li>
           <li><a href="/debug">/debug</a> - Debug info</li>
           <li><a href="/logs">/logs</a> - Call logs</li>
+          <li><a href="/daily-logs">/daily-logs</a> - Daily call logs</li>
           <li><a href="/appointments">/appointments</a> - All appointments</li>
           <li><a href="/conversations">/conversations</a> - AI conversations</li>
           <li><a href="/reminders">/reminders</a> - Reminder logs</li>
-          <li><a href="/business-status">/business-status</a> - Business hours check</li>
+          <li><a href="/business-status">/business-status</a> - Business hours</li>
         </ul>
         <p>Twilio Webhook: POST /voice</p>
         <p>⏰ Reminder System: Calls ONE DAY BEFORE appointment at 2 PM Pacific Time</p>
         <p>🔄 Next check: Every 5 minutes</p>
+        <p>📅 Daily logs saved in: /daily_logs/YYYY-MM-DD.json</p>
       </body>
     </html>
   `);
@@ -133,10 +145,17 @@ function logCall(phone, action, details = {}) {
       logs = JSON.parse(data || '[]');
     }
     
-    logs.push({
+    // Добавляем информацию о рабочем времени
+    const enhancedDetails = {
+      ...details,
+      isWithinBusinessHours: isWithinBusinessHours(),
+      businessStatus: getBusinessStatus()
+    };
+    
+    const callRecord = {
       phone,
       action,
-      details,
+      details: enhancedDetails,
       timestamp: new Date().toISOString(),
       time: new Date().toLocaleString('en-US', { 
         timeZone: 'America/Los_Angeles',
@@ -148,7 +167,9 @@ function logCall(phone, action, details = {}) {
         minute: '2-digit',
         second: '2-digit'
       })
-    });
+    };
+    
+    logs.push(callRecord);
     
     // Сохраняем только последние 1000 записей
     if (logs.length > 1000) {
@@ -157,6 +178,9 @@ function logCall(phone, action, details = {}) {
     
     fs.writeFileSync(CALL_LOGS_PATH, JSON.stringify(logs, null, 2));
     console.log(`📝 Call logged: ${phone} - ${action}`);
+    
+    // ✅ ЗАПИСЫВАЕМ В ДНЕВНОЙ ЛОГ
+    logDailyCall(phone, action, enhancedDetails);
     
   } catch (error) {
     console.error("ERROR logging call:", error);
@@ -291,6 +315,67 @@ function getNextAvailableDate() {
 }
 
 // -------------------------------------------------------
+// DAILY LOGS ENDPOINTS
+// -------------------------------------------------------
+app.get('/daily-logs', (req, res) => {
+  try {
+    const dates = getAllLogDates();
+    const todayStats = getTodayStats();
+    
+    res.json({
+      totalDays: dates.length,
+      dates: dates,
+      todayStats: todayStats,
+      message: "Use /daily-logs/YYYY-MM-DD to view logs for specific date"
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load daily logs" });
+  }
+});
+
+app.get('/daily-logs/:date', (req, res) => {
+  try {
+    const date = req.params.date;
+    const log = getLogForDate(date);
+    
+    if (!log) {
+      return res.status(404).json({ 
+        error: "Log not found for this date",
+        message: "Available dates: /daily-logs" 
+      });
+    }
+    
+    res.json({
+      date: log.formattedDate || date,
+      totalCalls: log.totalCalls || 0,
+      appointmentsMade: log.appointmentsMade || 0,
+      callbackRequests: log.callbackRequests || 0,
+      representativeCalls: log.representativeCalls || 0,
+      creativeDirectorCalls: log.creativeDirectorCalls || 0,
+      partnershipInquiries: log.partnershipInquiries || 0,
+      afterHoursCalls: log.afterHoursCalls || 0,
+      voiceMessages: log.voiceMessages || 0,
+      seriousQuestions: log.seriousQuestions || 0,
+      calls: log.calls || []
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load daily log" });
+  }
+});
+
+app.get('/daily-stats/:startDate/:endDate', (req, res) => {
+  try {
+    const startDate = req.params.startDate;
+    const endDate = req.params.endDate;
+    const stats = getStatsForPeriod(startDate, endDate);
+    
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load period stats" });
+  }
+});
+
+// -------------------------------------------------------
 // MAIN MENU (5 OPTIONS)
 // -------------------------------------------------------
 app.post('/voice', (req, res) => {
@@ -302,7 +387,8 @@ app.post('/voice', (req, res) => {
   // Логируем входящий звонок
   logCall(phone, 'CALL_RECEIVED', {
     caller: phone,
-    time: new Date().toLocaleTimeString()
+    time: new Date().toLocaleTimeString(),
+    isWithinBusinessHours: isWithinBusinessHours()
   });
   
   const gather = twiml.gather({
@@ -1446,6 +1532,8 @@ app.get('/health', (req, res) => {
 app.get('/debug', (req, res) => {
   const appointments = loadDB();
   const businessStatus = getBusinessStatus();
+  const todayStats = getTodayStats();
+  const allDates = getAllLogDates();
   
   // Загружаем логи
   let callLogs = [];
@@ -1474,6 +1562,11 @@ app.get('/debug', (req, res) => {
   res.json({
     status: 'running',
     businessStatus,
+    todayStats,
+    dailyLogs: {
+      totalDays: allDates.length,
+      dates: allDates.slice(0, 10) // Последние 10 дней
+    },
     appointments: {
       total: appointments.length,
       recent: appointments.slice(-10)
@@ -1574,14 +1667,17 @@ app.get('/reminders', (req, res) => {
 const PORT = process.env.PORT || 1337;
 app.listen(PORT, () => {
   const businessStatus = getBusinessStatus();
+  const todayStats = getTodayStats();
   
   console.log(`✅ IVR Server running on port ${PORT}`);
   console.log(`⏰ Business Status: ${businessStatus.isOpen ? 'OPEN' : 'CLOSED'}`);
   console.log(`🕐 Current Time (PST): ${businessStatus.currentTime}`);
   console.log(`📅 Next Open: ${businessStatus.nextOpenTime}`);
+  console.log(`📊 Today's stats: ${todayStats.totalCalls} calls, ${todayStats.appointmentsMade} appointments`);
   console.log(`✅ Health check: http://localhost:${PORT}/health`);
   console.log(`✅ Debug: http://localhost:${PORT}/debug`);
   console.log(`📊 Logs: http://localhost:${PORT}/logs`);
+  console.log(`📅 Daily Logs: http://localhost:${PORT}/daily-logs`);
   console.log(`📅 Appointments: http://localhost:${PORT}/appointments`);
   console.log(`🤖 Conversations: http://localhost:${PORT}/conversations`);
   console.log(`⏰ Reminders: http://localhost:${PORT}/reminders`);
@@ -1589,6 +1685,7 @@ app.listen(PORT, () => {
   console.log(`✅ Next available date: ${getNextAvailableDate()}`);
   console.log(`🤖 AI Representative is ready (fast mode)`);
   console.log(`📝 Logging enabled: call_logs.json, ai_conversations.json, reminders_log.json`);
+  console.log(`📁 Daily logs: /daily_logs/YYYY-MM-DD.json`);
   console.log(`⏰ Reminder system: Calls ONE DAY BEFORE appointment at 2 PM Pacific Time`);
   console.log(`🔄 Check interval: Every 5 minutes`);
   console.log(`🔔 Test endpoint: POST http://localhost:${PORT}/test-reminder?phone=+1234567890`);
